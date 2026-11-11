@@ -159,3 +159,61 @@ configure. See [locale/README.md](source/native/locale/README.md).
 
 These checks do not establish live provider execution or correct final
 presentation in a game.
+
+## Building on Linux
+
+`tools/linux/build.sh` builds `RTXMFGUnified` into `build/linux/MFGUnlocker.dll` with clang-cl and lld-link against
+an xwin copy of the Windows CRT and SDK. It does not run MSVC, nvcc, glslangValidator or the Windows SDK's `dxc.exe`.
+The Windows build above is untouched: `source/native/CMakeLists.txt` only takes the Linux branches when
+`MFG_PREGENERATED_INPUTS` is set, and `build.ps1` never sets it.
+
+Tools on the machine: clang-cl, lld-link, llvm-rc, llvm-mt, llvm-ml, llvm-lib, CMake 3.24 or newer, Ninja, Python 3.10
+or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. Wine is
+needed only for `test.sh`. The script prints the versions it finds and does not fail on them.
+
+Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A mismatch stops the script and names the file:
+
+| Input | Default location | Override |
+| --- | --- | --- |
+| Streamline SDK 2.14.1 | `~/.cache/mfg-unlocker/sdk/streamline-sdk-v2.14.1` | `MFG_STREAMLINE_ROOT` |
+| XeSS SDK 3.0.2 | `~/.cache/mfg-unlocker/sdk/xess-sdk-3.0.2` | `MFG_XESS_SDK_ROOT` |
+| Dear ImGui `3912b3d` | `~/Projetos/renodx/external/reshade/deps/imgui` | `MFG_IMGUI_ROOT` |
+| Vulkan 1.2.176 headers | a Vulkan-Headers git checkout with tag `v1.2.176` | `MFG_VULKAN12_HEADERS_GIT` |
+| Vulkan 1.4.363 headers | `/usr/include` | `MFG_VULKAN14_INCLUDE` |
+| Release 1.7.0 zip | `~/Jogos/Mods/cyberpunk2077/mfg-unlocker-dashdogy-1.7.0/MFGUnlocker-v1.7.0.zip` | `MFG_RELEASE_ZIP` |
+
+The pins describe the Windows checkouts, which use CRLF. ImGui and the Vulkan headers match only after LF to CRLF, so the
+script verifies them in that form and builds from a pinned CRLF copy in `~/.cache/mfg-unlocker/sdk/crlf`. The Vulkan
+1.4.363 `vk_video` headers are not pinned by `build.ps1`; `tools/linux/check_sdk.py` pins them too.
+
+Some inputs need Windows-only tools, which Linux does not have. The script takes them from the release DLL instead:
+the 130 SM86 kernels and the RTX 30 manifests, the XeSS programs, the XeFG shaders, the tensor-core fatbin, the XeMFG
+Vulkan SPIR-V, and the overlay and input-copy SPIR-V. `tools/linux/extract_inputs.py` checks the zip's SHA-256 before it
+reads anything, refuses any other file, and writes the result once to `~/.cache/mfg-unlocker/inputs/v1.7.0`. Every output is
+checked against the pin its own Windows generator carries. The cache holds Intel-derived programs under Intel's terms
+(see [NOTICE.md](NOTICE.md)); it stays outside the repository. The proxy dispatchers, the ImGui DX12 adaptation, the
+locale catalogs and the DLSS 5 SPIR-V are generated at every configure by the repository's own generators.
+
+A change to `ui_color.frag`, `vk_input_copy.comp`, `xess/port/*.hlsl` or `xess/cuda/xefg_cuda_*` makes the script stop:
+Linux cannot recompile those, so the extracted outputs would no longer match the source.
+
+`tools/linux/test.sh` builds the test projects that need no GPU, game file or provider DLL with the same toolchain and
+runs them under Wine in `~/.cache/mfg-unlocker/wineprefix`. It prints one line per test: passed, failed, or not runnable
+with the reason. A release_regression case that fails with the built DLL is run again with the unmodified v1.7.0 DLL;
+if that fails too, the case is not runnable here. `build/linux-tests` holds the logs.
+
+Differences from the release DLL, checked with `tools/linux/compare_dll.py <release.dll> build/linux/MFGUnlocker.dll`:
+
+- All 1295 exports match by ordinal and name, and the export directory reads `RTXMFG.dll`. lld names the directory after
+  the output file, so `finalize_dll.py` rewrites the name after the link, and `/EXPORT:MfgXeFGVkGetApi,@428` gives that
+  export the ordinal link.exe chose. `/MERGE:.edata=.edata` keeps the export table 4-byte aligned, which
+  `SelectProxyExports` in `single_module.cpp` requires.
+- The code is built with `/EHa`. clang-cl drops `__try` guards around plain memory reads without it, and the RTX 30
+  tests crash on the first guarded read.
+- The static CRT is xwin's (UCRT 10.0.26100), so the `kernel32.dll` import list differs. The notices (RCDATA 101 to 104)
+  differ only in line endings, and the manifest differs in formatting.
+- The DLL is larger than the release (about 17.1 MB against 14.4 MB), and the compiler and linker differ.
+
+Set `MFG_CACHE`, `MFG_INPUTS_DIR`, `MFG_BUILD_DIR`, `MFG_XWIN`, `MFG_DXC` or `MFG_WINEPREFIX` to move the other paths.
+After a change to `tools/linux/toolchain.cmake`, delete `build/linux` and `build/linux-tests`: CMake keeps the flags from
+the first configure.

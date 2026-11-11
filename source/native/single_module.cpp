@@ -4,6 +4,7 @@
 #include "overlay_install.h"
 #include "single_overlay.h"
 #include "overlay_dxgi_proxy.h"
+#include "overlay_application_imports.h"
 #include "optiscaler_host.h"
 #include "optiscaler_menu_tab.h"
 #include "host_process_policy.h"
@@ -686,6 +687,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     if (reason == DLL_PROCESS_DETACH && gOwnsBackend)
         session_diagnostics::OnProcessDetach(reserved != nullptr);
 #endif
+    if (reason == DLL_PROCESS_DETACH)
+        single_overlay::application_imports::OnProcessDetach();
     if (reason != DLL_PROCESS_ATTACH)
         return TRUE;
     gSelf = instance;

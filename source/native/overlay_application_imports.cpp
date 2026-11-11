@@ -22,6 +22,7 @@ struct Binding {
 };
 std::array<Binding,32> bindings{};
 std::atomic_flag publishing = ATOMIC_FLAG_INIT;
+std::atomic<bool> processDetached{false};
 
 bool FactoryName(const char* name) noexcept {
     return !strcmp(name,"CreateDXGIFactory") || !strcmp(name,"CreateDXGIFactory1")
@@ -30,6 +31,7 @@ bool FactoryName(const char* name) noexcept {
 template<size_t I> __declspec(noinline) FARPROC WINAPI Resolve(HMODULE module,LPCSTR name) {
     const auto original=bindings[I].original.load(std::memory_order_acquire);
     if (!original) return nullptr;
+    if (processDetached.load(std::memory_order_acquire)) return original(module,name);
     FARPROC result=nullptr;
     if (!xess_mod::ResolveNativeSdkCreate(bindings[I].importer.load(std::memory_order_acquire),
             _ReturnAddress(),module,name,result)) result=original(module,name);
@@ -237,6 +239,9 @@ HMODULE StreamlineHost(const void* caller,HMODULE interposer) noexcept {
             reinterpret_cast<LPCWSTR>(retained.module),&pinned) || pinned!=retained.module) return nullptr;
     return pinned;
 #endif
+}
+void OnProcessDetach() noexcept {
+    processDetached.store(true,std::memory_order_release);
 }
 void ArmStartupDependencies() noexcept {
 #if !MFG_UNLOCK_DIAGNOSTIC_NO_SINGLE_OVERLAY

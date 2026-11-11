@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+real=${MFG_DXC:-$HOME/.local/dxc/bin/dxc}
+pinned='dxcompiler.dll: 1.9(5512-01b62ad4)(1.9.0.5512) - 1.9.0.5512 (01b62ad47)'
+if [ "${1:-}" = "--version" ]; then
+    reported=$("$real" --version)
+    case $reported in
+        *'(5512-01b62ad4)'*) printf '%s\n' "$pinned" ;;
+        *) echo "dxc shim: $real reports '$reported', not build 5512-01b62ad4" >&2; exit 1 ;;
+    esac
+    exit 0
+fi
+exec "$real" "$@"

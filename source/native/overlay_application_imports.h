@@ -11,4 +11,5 @@ void ArmStartupDependencies() noexcept;
 // Streamline and resolves its factory exports itself). Pinned for the process
 // lifetime before it is returned; nullptr for the executable or anything else.
 HMODULE StreamlineHost(const void* caller, HMODULE interposer) noexcept;
+void OnProcessDetach() noexcept;
 }

@@ -43,6 +43,8 @@ if(MFG_UNLOCK_OUTPUT_PULL_MASK_OCCUPANCY AND NOT MFG_UNLOCK_OUTPUT_PULL_MASK_ONL
 endif()
 set(IMGUI_ROOT "" CACHE PATH
     "Path to the Dear ImGui source tree used by that ReShade version")
+set(MFG_PREGENERATED_INPUTS "" CACHE PATH
+    "Linux build (tools/linux/build.sh): directory holding the shader and program outputs that only Windows tools can generate")
 
 include(ampere_native_cache.cmake)
 if(NOT MFG_AMPERE_EMBEDDED_KERNELS)
@@ -102,8 +104,10 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
 
     find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
     set(GLSLANG_VALIDATOR "" CACHE FILEPATH "glslangValidator.exe from Vulkan SDK 1.2.176.1")
-    if(NOT EXISTS "${GLSLANG_VALIDATOR}")
-        message(FATAL_ERROR "Set GLSLANG_VALIDATOR to the pinned Vulkan shader compiler")
+    if(NOT MFG_PREGENERATED_INPUTS)
+        if(NOT EXISTS "${GLSLANG_VALIDATOR}")
+            message(FATAL_ERROR "Set GLSLANG_VALIDATOR to the pinned Vulkan shader compiler")
+        endif()
     endif()
     set(MFG_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/generated")
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/witcher_dots/converter.hlsl" DOTS_CONVERTER_SOURCE)
@@ -116,9 +120,17 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
     configure_file(rtx_hair/instance_patch_source.h.in "${MFG_GENERATED}/rtxhair_instance_patch_source.h" @ONLY)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS rtx_hair/dots_converter.hlsl rtx_hair/converter_source.h.in
         rtx_hair/instance_patch.hlsl rtx_hair/instance_patch_source.h.in)
-    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_build_inputs.py"
-        --output "${MFG_GENERATED}" --imgui "${IMGUI_ROOT}" --glslang "${GLSLANG_VALIDATOR}"
-        COMMAND_ERROR_IS_FATAL ANY)
+    if(MFG_PREGENERATED_INPUTS)
+        get_filename_component(MFG_LINUX_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/linux" ABSOLUTE)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${MFG_LINUX_TOOLS}/generate_build_inputs.py"
+            --output "${MFG_GENERATED}" --imgui "${IMGUI_ROOT}" --glslang "${MFG_PREGENERATED_INPUTS}"
+            COMMAND_ERROR_IS_FATAL ANY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${MFG_LINUX_TOOLS}/generate_build_inputs.py")
+    else()
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_build_inputs.py"
+            --output "${MFG_GENERATED}" --imgui "${IMGUI_ROOT}" --glslang "${GLSLANG_VALIDATOR}"
+            COMMAND_ERROR_IS_FATAL ANY)
+    endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         generate_build_inputs.py proxy_exports.txt generated_sha256.json ui_color.frag
         "${IMGUI_ROOT}/backends/imgui_impl_dx12.cpp" "${IMGUI_ROOT}/backends/imgui_impl_dx11.cpp" "${GLSLANG_VALIDATOR}")
@@ -135,10 +147,18 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
         message(FATAL_ERROR "Set DLSS5_VK_DXC to the pinned Vulkan SDK 1.4.363.0 dxc.exe")
     endif()
     get_filename_component(DLSS5_VK_BIN "${DLSS5_VK_DXC}" DIRECTORY)
-    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_dlss5_vk_shaders.py"
-        --dxc "${DLSS5_VK_DXC}" --spirv-val "${DLSS5_VK_BIN}/spirv-val.exe"
-        --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
-        COMMAND_ERROR_IS_FATAL ANY)
+    if(MFG_PREGENERATED_INPUTS)
+        find_program(MFG_SPIRV_VAL spirv-val REQUIRED)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_dlss5_vk_shaders.py"
+            --dxc "${DLSS5_VK_DXC}" --spirv-val "${MFG_SPIRV_VAL}"
+            --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
+            COMMAND_ERROR_IS_FATAL ANY)
+    else()
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_dlss5_vk_shaders.py"
+            --dxc "${DLSS5_VK_DXC}" --spirv-val "${DLSS5_VK_BIN}/spirv-val.exe"
+            --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
+            COMMAND_ERROR_IS_FATAL ANY)
+    endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS generate_dlss5_vk_shaders.py dlss5.cpp)
     include_directories("${MFG_GENERATED}")
     # slim.1 (V1.7.1): every generated payload list ships as one LZMA-compressed resource (embedded_payload.cmake);
@@ -158,35 +178,43 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
         file(GLOB XESS_PROGRAM_INPUTS CONFIGURE_DEPENDS "${XESS_PROGRAMS_ROOT}/programs/*")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             xess/generate_xess_programs.py ${XESS_PROGRAM_INPUTS})
-        # splat.1: RTXMFG's own XeFG shaders, compiled by the generator's pinned Windows SDK dxc
-        # (the SDK selected by -A x64,version=...); the generator pins the dxc version and outputs.
-        get_filename_component(MFG_WINDOWS_KITS
-            "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE)
-        set(MFG_DXC "${MFG_WINDOWS_KITS}/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64/dxc.exe")
-        if(NOT CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION OR NOT EXISTS "${MFG_DXC}")
-            message(FATAL_ERROR "XeFG shaders need dxc.exe from the selected Windows SDK: ${MFG_DXC}")
+        if(MFG_PREGENERATED_INPUTS)
+            foreach(generated embedded_xess_shaders embedded_xefg_cuda embedded_xvk_programs)
+                configure_file("${MFG_PREGENERATED_INPUTS}/${generated}.generated.h" "${MFG_GENERATED}/${generated}.generated.h" COPYONLY)
+                configure_file("${MFG_PREGENERATED_INPUTS}/${generated}.rc.in" "${MFG_GENERATED}/${generated}.rc" @ONLY)
+            endforeach()
+            configure_file("${MFG_PREGENERATED_INPUTS}/vk_input_copy_spv.h" "${MFG_GENERATED}/vk_input_copy_spv.h" COPYONLY)
+        else()
+            # splat.1: RTXMFG's own XeFG shaders, compiled by the generator's pinned Windows SDK dxc
+            # (the SDK selected by -A x64,version=...); the generator pins the dxc version and outputs.
+            get_filename_component(MFG_WINDOWS_KITS
+                "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE)
+            set(MFG_DXC "${MFG_WINDOWS_KITS}/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64/dxc.exe")
+            if(NOT CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION OR NOT EXISTS "${MFG_DXC}")
+                message(FATAL_ERROR "XeFG shaders need dxc.exe from the selected Windows SDK: ${MFG_DXC}")
+            endif()
+            execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/generate_xess_shaders.py"
+                --dxc "${MFG_DXC}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
+                COMMAND_ERROR_IS_FATAL ANY)
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                xess/generate_xess_shaders.py xess/port/splat_motion_aware.hlsl xess/port/unet_conv.hlsl)
+            # V1.5.1 tensorcore.1: the ported model's int8 layers as CUDA kernels (xess/cuda), compiled by the pinned
+            # CUDA Toolkit 13.2 nvcc in the build's MSVC toolset environment; the generator pins compiler and output.
+            set(MFG_CUDA_ROOT "" CACHE PATH "CUDA Toolkit 13.2 directory (bin/nvcc.exe) for the XeFG tensor-core kernels")
+            if(NOT EXISTS "${MFG_CUDA_ROOT}/bin/nvcc.exe")
+                message(FATAL_ERROR "Set MFG_CUDA_ROOT to the pinned CUDA Toolkit 13.2")
+            endif()
+            string(REGEX MATCH "VCToolsVersion=([0-9.]+)" MFG_VC_TOOLS_MATCH "${CMAKE_VS_GLOBALS}")
+            if(NOT CMAKE_MATCH_1 OR NOT CMAKE_GENERATOR_INSTANCE)
+                message(FATAL_ERROR "The XeFG tensor-core kernels need CMAKE_GENERATOR_INSTANCE and VCToolsVersion (build.ps1 sets both)")
+            endif()
+            execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/cuda/generate_cuda_layers.py"
+                --nvcc "${MFG_CUDA_ROOT}/bin/nvcc.exe" --vcvars "${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat"
+                --vcvars-ver "${CMAKE_MATCH_1}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
+                COMMAND_ERROR_IS_FATAL ANY)
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                xess/cuda/generate_cuda_layers.py xess/cuda/xefg_cuda_layers.cu xess/cuda/xefg_cuda_params.h)
         endif()
-        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/generate_xess_shaders.py"
-            --dxc "${MFG_DXC}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
-            COMMAND_ERROR_IS_FATAL ANY)
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            xess/generate_xess_shaders.py xess/port/splat_motion_aware.hlsl xess/port/unet_conv.hlsl)
-        # V1.5.1 tensorcore.1: the ported model's int8 layers as CUDA kernels (xess/cuda), compiled by the pinned
-        # CUDA Toolkit 13.2 nvcc in the build's MSVC toolset environment; the generator pins compiler and output.
-        set(MFG_CUDA_ROOT "" CACHE PATH "CUDA Toolkit 13.2 directory (bin/nvcc.exe) for the XeFG tensor-core kernels")
-        if(NOT EXISTS "${MFG_CUDA_ROOT}/bin/nvcc.exe")
-            message(FATAL_ERROR "Set MFG_CUDA_ROOT to the pinned CUDA Toolkit 13.2")
-        endif()
-        string(REGEX MATCH "VCToolsVersion=([0-9.]+)" MFG_VC_TOOLS_MATCH "${CMAKE_VS_GLOBALS}")
-        if(NOT CMAKE_MATCH_1 OR NOT CMAKE_GENERATOR_INSTANCE)
-            message(FATAL_ERROR "The XeFG tensor-core kernels need CMAKE_GENERATOR_INSTANCE and VCToolsVersion (build.ps1 sets both)")
-        endif()
-        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/cuda/generate_cuda_layers.py"
-            --nvcc "${MFG_CUDA_ROOT}/bin/nvcc.exe" --vcvars "${CMAKE_GENERATOR_INSTANCE}/VC/Auxiliary/Build/vcvars64.bat"
-            --vcvars-ver "${CMAKE_MATCH_1}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
-            COMMAND_ERROR_IS_FATAL ANY)
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            xess/cuda/generate_cuda_layers.py xess/cuda/xefg_cuda_layers.cu xess/cuda/xefg_cuda_params.h)
         # beta.8: XeSS MFG under OptiScaler (no Reflex bridge or Intel native control); xemfgsa.1 (V1.7.0): XeMFG
         # standalone, RTXMFG as the D3D12 XeFG host (xess/d3d12_host.cpp).
         set(MFG_XESS_SOURCES
@@ -203,22 +231,26 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
         # the module keeps its pinned Vulkan 1.2 headers.
         set(XVK_PROGRAMS_ROOT "" CACHE PATH "Directory with SHA256SUMS.txt and the xvk <dxil-sha256>.spv/.json program pairs")
         set(XVK_VULKAN_INCLUDE_DIR "" CACHE PATH "Vulkan SDK 1.4.363.0 include directory for the xvk layer")
-        if(NOT EXISTS "${XVK_PROGRAMS_ROOT}/SHA256SUMS.txt")
-            message(FATAL_ERROR "Set XVK_PROGRAMS_ROOT to the pinned xvk SPIR-V program set")
+        if(NOT MFG_PREGENERATED_INPUTS)
+            if(NOT EXISTS "${XVK_PROGRAMS_ROOT}/SHA256SUMS.txt")
+                message(FATAL_ERROR "Set XVK_PROGRAMS_ROOT to the pinned xvk SPIR-V program set")
+            endif()
         endif()
         if(NOT EXISTS "${XVK_VULKAN_INCLUDE_DIR}/vulkan/vulkan_core.h")
             message(FATAL_ERROR "Set XVK_VULKAN_INCLUDE_DIR to the pinned Vulkan SDK 1.4.363.0 headers")
         endif()
-        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/vulkan/generate_xvk_programs.py"
-            --programs "${XVK_PROGRAMS_ROOT}" --output "${MFG_GENERATED}"
-            COMMAND_ERROR_IS_FATAL ANY)
-        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/vulkan/generate_vk_input_shaders.py"
-            --glslang "${GLSLANG_VALIDATOR}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
-            COMMAND_ERROR_IS_FATAL ANY)
-        # vkhair.4: universal hair's Vulkan converter and instance patch (rtx_hair/vk_dots_builder), pinned like the input copy.
-        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/rtx_hair/generate_vk_hair_shaders.py"
-            --glslang "${GLSLANG_VALIDATOR}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
-            COMMAND_ERROR_IS_FATAL ANY)
+        if(NOT MFG_PREGENERATED_INPUTS)
+            execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/vulkan/generate_xvk_programs.py"
+                --programs "${XVK_PROGRAMS_ROOT}" --output "${MFG_GENERATED}"
+                COMMAND_ERROR_IS_FATAL ANY)
+            execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/xess/vulkan/generate_vk_input_shaders.py"
+                --glslang "${GLSLANG_VALIDATOR}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
+                COMMAND_ERROR_IS_FATAL ANY)
+            # vkhair.4: universal hair's Vulkan converter and instance patch (rtx_hair/vk_dots_builder), pinned like the input copy.
+            execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/rtx_hair/generate_vk_hair_shaders.py"
+                --glslang "${GLSLANG_VALIDATOR}" --source "${CMAKE_CURRENT_SOURCE_DIR}" --output "${MFG_GENERATED}"
+                COMMAND_ERROR_IS_FATAL ANY)
+        endif()
         # rtx_hair/spirv_module.cpp's operand table, written from the pinned SDK's SPIR-V grammar.
         set(MFG_SPIRV_GRAMMAR "${XVK_VULKAN_INCLUDE_DIR}/spirv/unified1/spirv.core.grammar.json")
         file(SHA256 "${MFG_SPIRV_GRAMMAR}" spirvGrammarSha)
@@ -357,5 +389,11 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
     target_include_directories(RTXMFGUnified PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     set_target_properties(RTXMFGUnified PROPERTIES PREFIX "" OUTPUT_NAME "MFGUnlocker"
         LINKER_LANGUAGE CXX MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    if(MFG_PREGENERATED_INPUTS)
+        target_link_options(RTXMFGUnified PRIVATE /EXPORT:MfgXeFGVkGetApi,@428 /MERGE:.edata=.edata)
+        add_custom_command(TARGET RTXMFGUnified POST_BUILD
+            COMMAND "${Python3_EXECUTABLE}" "${MFG_LINUX_TOOLS}/finalize_dll.py" "$<TARGET_FILE:RTXMFGUnified>" RTXMFG.dll
+            VERBATIM)
+    endif()
     add_custom_target(RTX40MFGSingle ALL DEPENDS RTXMFGUnified)
 endif()
