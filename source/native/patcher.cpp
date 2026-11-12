@@ -1984,6 +1984,7 @@ ControlConfig EffectiveControl(const ControlConfig& saved) noexcept
     effective.vsyncMode = 0;
     effective.reflexFrameLimitFps = 0;
     effective.reflexSleepSkip = false;
+    effective.xmx = false;
     effective.xmxXell = false;
     effective.xmxStandIn = false;
     effective.dynamicExperimental56 = false;
