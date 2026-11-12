@@ -1,5 +1,41 @@
 # Universal MFG Unlocker V1.7.1
 
+## About this fork
+
+This is a fork of [dashdogy/MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker) v1.7.1 with two additions:
+fixes that let MFG Unlocker run under Proton and Wine on Linux, and the XMX generation mode from
+[mavismmg/MFGAdaUnlock-RenoDx](https://github.com/mavismmg/MFGAdaUnlock-RenoDx). The rest of this README is upstream's,
+and its Quick start downloads upstream's release, which has neither. This fork's builds are on its own
+[Releases](https://github.com/brunofgmag/MFG-Unlocker/releases) page.
+
+**XMX** runs Intel's XeFG model inside the game's own DLSS Frame Generation on RTX 40 and RTX 50 GPUs. DLSS Frame
+Generation still presents the frames and keeps Reflex; XeFG only draws the generated frames. NVIDIA's generator is
+never created, which left about 940 MB more VRAM to Microsoft Flight Simulator 2024 at 4K. To turn it on:
+
+1. Download [Intel's XeSS SDK 3.0.2](https://github.com/intel/xess/releases/tag/v3.0.2) and copy `bin/libxess_fg.dll`
+   and `bin/libxell.dll` into a folder named `RTXMFG-XeSS` beside MFG Unlocker. XMX needs that `libxess_fg.dll`
+   (1.3.1.78); with another version NVIDIA's generator keeps running.
+2. In the menu, set **Generation model** to **XMX (Intel XeFG)** and restart the game.
+
+XMX stays off on RTX 30 and RTX 20 GPUs and while XeMFG standalone is on.
+
+**XeLL sleep**, under Generation model, sends the game's Reflex sleep to Intel XeLL while XMX generates. Under Proton it
+also keeps the low latency mode off in vkd3d-proton, so vkd3d-proton keeps its own two-frame queue limit and the
+launch option `VKD3D_DISABLE_EXTENSIONS=VK_NV_low_latency2` is no longer needed.
+
+**Proton fixes**, each tested in games under Proton:
+
+- The menu and the adapter-parent route work with ReShade loaded as `dxgi.dll`.
+- DLSS 5 compiles its compute shaders with Wine's `D3DCompile`
+  ([dashdogy/MFG-Unlocker#169](https://github.com/dashdogy/MFG-Unlocker/issues/169)) and opens its provider when Wine
+  reports `PAGE_WRITECOPY` ([dashdogy/MFG-Unlocker#170](https://github.com/dashdogy/MFG-Unlocker/issues/170)).
+- DLSS 5 accepts depth, motion vectors and exposure with mips, as Microsoft Flight Simulator 2024 sends them
+  ([dashdogy/MFG-Unlocker#171](https://github.com/dashdogy/MFG-Unlocker/issues/171)).
+
+The fork also builds on Linux with clang-cl and xwin; see [Building on Linux](BUILD.md#building-on-linux).
+
+---
+
 **README** · [Install](docs/install.md) · [Using the menu](docs/menu.md) · [Game compatibility](docs/compatibility.md) · [OptiScaler](docs/optiscaler.md) · [XeMFG](docs/xemfg.md) · [Troubleshooting](docs/troubleshooting.md)
 
 Multi Frame Generation for Windows x64 games, in one DLL. It brings **DLSS
