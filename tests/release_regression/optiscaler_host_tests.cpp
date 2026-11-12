@@ -686,7 +686,7 @@ int wmain(int argc, wchar_t** argv)
     }
 
     std::string saved = R"({"followGame":false,"mode":"fixed","multiplier":4,"dlssgPreset":1,)"
-        R"("vsyncMode":1,"reflexFrameLimitFps":90,"reflexSleepSkip":1,"xmxXell":1,"xmxStandIn":1,"xessMultiplier":4,"xessForceEnable":true,)"
+        R"("vsyncMode":1,"reflexFrameLimitFps":90,"reflexSleepSkip":1,"xmx":1,"xmxXell":1,"xmxStandIn":1,"xessMultiplier":4,"xessForceEnable":true,)"
         R"("xessLowLatencyMode":2,"xessFrameLimitFps":120,"generatedOnlyDebug":true,"dlssSrPreset":11,"dlss5":true)";
     saved += mode == L"optin" || mode == L"xefg-output-optin" ? R"(,"optiScalerUi":"rtxmfg"})"
         // menutab and menutab-plugin set "optiscaler": hidden is not the default outside a ForzaTech executable, and the
@@ -822,6 +822,9 @@ int wmain(int argc, wchar_t** argv)
     Check(Has(json, "reflexSleepSkip", delegated ? "false" : "true"), "Reflex sleep skip override");
     Check(Has(json, "xmxXell", delegated ? "false" : "true"), "XMX XeLL override");
     Check(Has(json, "xmxStandIn", delegated ? "false" : "true"), "XMX stand-in override");
+    Check(Has(json, "xmxSaved", delegated ? "false" : "true"), "XMX override");
+    Check(Has(json, "xmxLatched", delegated && mode != L"late" ? "false" : "true"),
+        "XMX latches at start with the effective key; a late OptiScaler leaves it to the next start");
     // XeSS MFG runs under OptiScaler only; the saved file's older XeSS keys still load and are ignored.
     Check(json.find("\"xessMultiplier\"") == std::string::npos && json.find("\"xessForceEnable\"") == std::string::npos
         && json.find("\"xessFrameLimitFps\"") == std::string::npos && json.find("\"xessLowLatencyMode\"") == std::string::npos,
