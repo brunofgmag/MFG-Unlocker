@@ -5,7 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/environment.sh"
 
 tests_build=${MFG_TEST_BUILD_DIR:-$repository/build/linux-tests}
 dll=$build/MFGUnlocker.dll
-release_dll=$cache/release/MFGUnlocker-v1.7.0.dll
+release_dll=$cache/release/v1.7.1/MFGUnlocker.dll
 export MFG_WINEPREFIX=${MFG_WINEPREFIX:-$cache/wineprefix}
 results=$(mktemp)
 trap 'rm -f "$results"' EXIT
@@ -24,19 +24,40 @@ declare -A not_runnable=(
     [dlss5-own-queue-layer]="needs WARP, which Wine does not provide"
     [dlss5-replace-failure]="needs WARP, which Wine does not provide"
     [dlss5-hdr-bridge-hue]="needs WARP, which Wine does not provide"
+    [dlss5-replace-memory]="needs WARP, which Wine does not provide"
+    [dlss5-auto-capacity]="needs WARP, which Wine does not provide"
+    [dlss5-d3d11-out-of-date-fails-closed]="needs WARP, which Wine does not provide"
+    [dlss5-d3d11-stage-revision]="needs WARP, which Wine does not provide"
+    [dlss5-d3d11-depth-pass]="needs WARP; Wine's D3D11 falls back to a hardware device, where the depth pass's conversion is refused"
+)
+
+gpu_reason="needs MFG_TEST_GPU=1 (creates a GPU device)"
+
+gpu_tests=(BlackwellAdapterProbe NvapiResolveTests XmxLatencyRuntimeTests XmxRuntimeDeviceTests
+    XmxGeneratorReuseTests XmxGeneratorFramesTests XmxGeneratorRefusedTests XmxGeneratorRefusedAlternatingTests
+    XmxGeneratorFallbackTests XmxGeneratorMemoryDeviceTests XmxGeneratorCopyMismatchTests)
+
+gpu_source_level_cases=(optiscaler-streamline-device)
+
+declare -A skipped_reasons=(
     [XmxRuntimeDeviceTests]="needs a D3D12 hardware device at feature level 12_0; Wine's vkd3d lists only a generic adapter and refuses 12_0"
 )
 
 regression_cases=(default-clean default-legacy default-fixed default-dynamic default-follow default-environment
-    default-xmx default-xmx-standalone
-    loader-version loader-winmm crash-reporter-host themida-imports control control-locked status-transport
-    scoped-import scoped-factory policy dynamic-availability vulkan-menu-status gpuname-off gpuname-on
+    loader-version loader-winmm crash-reporter-host themida-imports status-transport
+    policy dynamic-availability vulkan-menu-status gpuname-off gpuname-on
     gpuname-invalid small-stack-resolver log-retention interval-retention log-location session-diagnostics
     engine-direct engine-dynamic engine-late engine-middleware engine-external engine-conflict)
 
-source_level_cases=(scoped-factory-local-dxgi adapter-parent-local-dxgi)
+source_level_cases=(default-xmx default-xmx-standalone scoped-import scoped-factory scoped-factory-local-dxgi
+    adapter-parent-local-dxgi control control-locked
+    optiscaler-standalone optiscaler-proxy optiscaler-plugin optiscaler-late optiscaler-optin optiscaler-hidden
+    optiscaler-shared optiscaler-forza optiscaler-forza-shared optiscaler-impostor optiscaler-fakenvapi
+    optiscaler-streamline optiscaler-second-streamline optiscaler-streamline-device optiscaler-streamline-warp)
 
-regression_targets=(AdapterParentTests DxgiForwarderFixture StartupDefaultsTests ReleaseLoadCheck ThemidaImportHost ControlResolverTests
+declare -A source_level_not_runnable=()
+
+regression_targets=(SlInitFixture SlInitHotpatchFixture OptiScalerHostTests AdapterParentTests DxgiForwarderFixture StartupDefaultsTests ReleaseLoadCheck ThemidaImportHost ControlResolverTests
     ControlWrapperFixture StatusTransportTests ScopedImportTests ScopedFactoryTests ScopedCallerFixture
     NvidiaPolicyTests DynamicAvailabilityTests VulkanMenuStatusTests GpuNameStartupTests
     SmallStackResolverTests LogRetentionTests SessionDiagnosticsTests EngineFactoryTests
@@ -45,6 +66,36 @@ regression_targets=(AdapterParentTests DxgiForwarderFixture StartupDefaultsTests
 
 record() {
     printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" >>"$results"
+}
+
+gpu_gated() {
+    [ "${MFG_TEST_GPU:-}" != 1 ]
+}
+
+gpu_exclusion() {
+    local IFS='|'
+    printf '^(%s)$' "${gpu_tests[*]}"
+}
+
+record_gpu_gated() {
+    local project=$1 line name gated
+    local pattern='Test +#[0-9]+: (.+)$'
+    while IFS= read -r line; do
+        if [[ $line =~ $pattern ]]; then
+            name=${BASH_REMATCH[1]}
+            for gated in "${gpu_tests[@]}"; do
+                [ "$gated" = "$name" ] && record "$project" "$name" "not runnable" "$gpu_reason"
+            done
+        fi
+    done < <(ctest --test-dir "$tests_build/$project" -N)
+}
+
+is_gpu_source_level_case() {
+    local gated
+    for gated in "${gpu_source_level_cases[@]}"; do
+        [ "$gated" = "$1" ] && return 0
+    done
+    return 1
 }
 
 prepare_wine_prefix() {
@@ -75,14 +126,21 @@ build_targets() {
 
 run_ctest() {
     local project=$1 line name status
-    local pattern='Test +#[0-9]+: ([^ ]+) \.+ *(.*[A-Za-z)]) +[0-9.]+ sec'
-    ctest --test-dir "$tests_build/$project" --timeout 120 --output-on-failure >"$tests_build/$project/ctest.log" 2>&1
+    local pattern='Test +#[0-9]+: ([^ ]+) \.+ *(.*[^ ]) +[0-9.]+ sec'
+    local exclusion=()
+    if gpu_gated; then
+        exclusion=(-E "$(gpu_exclusion)")
+        record_gpu_gated "$project"
+    fi
+    ctest --test-dir "$tests_build/$project" --timeout 120 --output-on-failure "${exclusion[@]}" >"$tests_build/$project/ctest.log" 2>&1
     while IFS= read -r line; do
         if [[ $line =~ $pattern ]]; then
             name=${BASH_REMATCH[1]}
             status=${BASH_REMATCH[2]}
             if [ "$status" = Passed ]; then
                 record "$project" "$name" passed ""
+            elif [ "$status" = "***Skipped" ]; then
+                record "$project" "$name" "not runnable" "${skipped_reasons[$name]:-the test skipped itself; see $tests_build/$project/ctest.log}"
             elif [ -n "${not_runnable[$name]:-}" ]; then
                 record "$project" "$name" "not runnable" "${not_runnable[$name]}"
             else
@@ -114,16 +172,22 @@ run_regression_case() {
     if regression_run "$dll" "$case_name" "$output"; then
         record release_regression "$case_name" passed ""
     elif ! regression_run "$release_dll" "$case_name" "$tests_build/release_regression/results-release"; then
-        record release_regression "$case_name" "not runnable" "fails the same way with the unmodified v1.7.0 DLL under Wine"
+        record release_regression "$case_name" "not runnable" "fails the same way with the unmodified v1.7.1 DLL under Wine"
     else
-        record release_regression "$case_name" failed "passes with the v1.7.0 DLL; $(tail -n 1 "$output/$case_name.log")"
+        record release_regression "$case_name" failed "passes with the v1.7.1 DLL; $(tail -n 1 "$output/$case_name.log")"
     fi
 }
 
 run_source_level_case() {
     local case_name=$1 output=$tests_build/release_regression/results
+    if gpu_gated && is_gpu_source_level_case "$case_name"; then
+        record release_regression "$case_name" "not runnable" "$gpu_reason"
+        return
+    fi
     if regression_run "$dll" "$case_name" "$output"; then
         record release_regression "$case_name" passed ""
+    elif [ -n "${source_level_not_runnable[$case_name]:-}" ]; then
+        record release_regression "$case_name" "not runnable" "${source_level_not_runnable[$case_name]}"
     else
         record release_regression "$case_name" failed "$(tail -n 1 "$output/$case_name.log")"
     fi

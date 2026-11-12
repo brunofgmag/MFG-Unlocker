@@ -179,17 +179,19 @@ Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A m
 | XeSS SDK 3.0.2 | `~/.cache/mfg-unlocker/sdk/xess-sdk-3.0.2` | `MFG_XESS_SDK_ROOT` |
 | Dear ImGui `3912b3d` | `~/Projetos/renodx/external/reshade/deps/imgui` | `MFG_IMGUI_ROOT` |
 | Vulkan 1.2.176 headers | a Vulkan-Headers git checkout with tag `v1.2.176` | `MFG_VULKAN12_HEADERS_GIT` |
-| Vulkan 1.4.363 headers | `/usr/include` | `MFG_VULKAN14_INCLUDE` |
-| Release 1.7.0 zip | `~/Jogos/Mods/cyberpunk2077/mfg-unlocker-dashdogy-1.7.0/MFGUnlocker-v1.7.0.zip` | `MFG_RELEASE_ZIP` |
+| Vulkan 1.4.363 headers and SPIR-V grammar | `/usr/include` (Arch packages `vulkan-headers` and `spirv-headers`) | `MFG_VULKAN14_INCLUDE` |
+| Release 1.7.1 zip | `~/.cache/mfg-unlocker/release/v1.7.1/MFGUnlocker-v1.7.1.zip` | `MFG_RELEASE_ZIP` |
 
 The pins describe the Windows checkouts, which use CRLF. ImGui and the Vulkan headers match only after LF to CRLF, so the
 script verifies them in that form and builds from a pinned CRLF copy in `~/.cache/mfg-unlocker/sdk/crlf`. The Vulkan
-1.4.363 `vk_video` headers are not pinned by `build.ps1`; `tools/linux/check_sdk.py` pins them too.
+1.4.363 `vk_video` headers and `spirv/unified1/spirv.core.grammar.json` are not pinned by `build.ps1` (the grammar is
+pinned by `source/native/CMakeLists.txt`, in its CRLF form); `tools/linux/check_sdk.py` pins them too. When a pin
+list grows, the script stops with "missing"; delete `~/.cache/mfg-unlocker/sdk/crlf` and run it again.
 
 Some inputs need Windows-only tools, which Linux does not have. The script takes them from the release DLL instead:
 the 130 SM86 kernels and the RTX 30 manifests, the XeSS programs, the XeFG shaders, the tensor-core fatbin, the XeMFG
 Vulkan SPIR-V, and the overlay and input-copy SPIR-V. `tools/linux/extract_inputs.py` checks the zip's SHA-256 before it
-reads anything, refuses any other file, and writes the result once to `~/.cache/mfg-unlocker/inputs/v1.7.0`. Every output is
+reads anything, refuses any other file, and writes the result once to `~/.cache/mfg-unlocker/inputs/v1.7.1`. Every output is
 checked against the pin its own Windows generator carries. The cache holds Intel-derived programs under Intel's terms
 (see [NOTICE.md](NOTICE.md)); it stays outside the repository. The proxy dispatchers, the ImGui DX12 adaptation, the
 locale catalogs and the DLSS 5 SPIR-V are generated at every configure by the repository's own generators.
@@ -197,22 +199,25 @@ locale catalogs and the DLSS 5 SPIR-V are generated at every configure by the re
 A change to `ui_color.frag`, `vk_input_copy.comp`, `xess/port/*.hlsl` or `xess/cuda/xefg_cuda_*` makes the script stop:
 Linux cannot recompile those, so the extracted outputs would no longer match the source.
 
-`tools/linux/test.sh` builds the test projects that need no GPU, game file or provider DLL with the same toolchain and
+`tools/linux/test.sh` builds the test projects that need no game file or provider DLL with the same toolchain and
 runs them under Wine in `~/.cache/mfg-unlocker/wineprefix`. It prints one line per test: passed, failed, or not runnable
-with the reason. A release_regression case that fails with the built DLL is run again with the unmodified v1.7.0 DLL;
-if that fails too, the case is not runnable here. `build/linux-tests` holds the logs.
+with the reason. The tests that create a GPU device (a D3D12 or Vulkan device, an XeLL or XeFG context, a CUDA context
+or NVAPI calls into the installed driver) do not run by default and show as not runnable; set `MFG_TEST_GPU=1` to run
+them, and only with no game or simulator using the GPU. A release_regression case that fails with the built DLL is run
+again with the unmodified v1.7.1 DLL; if that fails too, the case is not runnable here. `build/linux-tests` holds the logs.
 
 Differences from the release DLL, checked with `tools/linux/compare_dll.py <release.dll> build/linux/MFGUnlocker.dll`:
 
-- All 1295 exports match by ordinal and name, and the export directory reads `RTXMFG.dll`. lld names the directory after
-  the output file, so `finalize_dll.py` rewrites the name after the link, and `/EXPORT:MfgXeFGVkGetApi,@428` gives that
-  export the ordinal link.exe chose. `/MERGE:.edata=.edata` keeps the export table 4-byte aligned, which
+- All 1297 exports match by ordinal and name, and the export directory reads `RTXMFG.dll`. lld names the directory after
+  the output file, so `finalize_dll.py` rewrites the name after the link, and `/EXPORT:MfgXeFGVkGetApi,@428` and
+  `/EXPORT:MfgXeMFGProviderGetApi,@429` give those two exports the ordinals link.exe chose. `/MERGE:.edata=.edata` keeps the export table 4-byte aligned, which
   `SelectProxyExports` in `single_module.cpp` requires.
 - The code is built with `/EHa`. clang-cl drops `__try` guards around plain memory reads without it, and the RTX 30
   tests crash on the first guarded read.
 - The static CRT is xwin's (UCRT 10.0.26100), so the `kernel32.dll` import list differs. The notices (RCDATA 101 to 104)
   differ only in line endings, and the manifest differs in formatting.
-- The DLL is larger than the release (about 17.1 MB against 14.4 MB), and the compiler and linker differ.
+- The DLL is larger than the release (about 10.6 MB against 7.4 MB), and the compiler and linker differ.
+- The DLSS 5 Vulkan SPIR-V group (RCDATA 3905) differs whenever `dlss5.cpp` differs from the release's.
 
 Set `MFG_CACHE`, `MFG_INPUTS_DIR`, `MFG_BUILD_DIR`, `MFG_XWIN`, `MFG_DXC` or `MFG_WINEPREFIX` to move the other paths.
 After a change to `tools/linux/toolchain.cmake`, delete `build/linux` and `build/linux-tests`: CMake keeps the flags from
