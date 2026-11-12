@@ -14,10 +14,43 @@
 #include "midpoint_fix.h"
 #include "xess/d3d12_host.h"
 #include "xess/vulkan/vk_host.h"
+#include "anr/anr.h"
 #include "xmx/xmx.h"
 
 XmxFake gXmx;
+AnrFake gAnr;
 GateFake gGate;
+
+namespace anr
+{
+bool AnswerNgxCall(xmx::ProviderCall call, const xmx::ProviderArgs& args, NVSDK_NGX_Result& result) noexcept
+{
+    switch (call)
+    {
+    case xmx::ProviderCall::eCreate:
+        ++gAnr.createCalls;
+        gAnr.list = args.commandList;
+        gAnr.parameters = args.parameters;
+        if (!gAnr.answers) return false;
+        *static_cast<NVSDK_NGX_Handle**>(args.outHandle) = gAnr.createHandle;
+        break;
+    case xmx::ProviderCall::eEvaluate:
+        ++gAnr.evaluateCalls;
+        gAnr.list = args.commandList;
+        gAnr.parameters = args.parameters;
+        gAnr.handle = reinterpret_cast<const void*>(args.featureOrHandle);
+        if (!gAnr.answers) return false;
+        break;
+    case xmx::ProviderCall::eRelease:
+        ++gAnr.releaseCalls;
+        gAnr.handle = reinterpret_cast<const void*>(args.featureOrHandle);
+        if (!gAnr.answers) return false;
+        break;
+    }
+    result = gAnr.result;
+    return true;
+}
+}
 
 namespace xmx
 {

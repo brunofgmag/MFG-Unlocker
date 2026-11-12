@@ -49,7 +49,7 @@ regression_cases=(default-clean default-legacy default-fixed default-dynamic def
     gpuname-invalid small-stack-resolver log-retention interval-retention log-location session-diagnostics
     engine-direct engine-dynamic engine-late engine-middleware engine-external engine-conflict)
 
-source_level_cases=(default-xmx default-xmx-standalone scoped-import scoped-factory scoped-factory-local-dxgi
+source_level_cases=(default-xmx default-xmx-standalone default-anr default-anr-xmx scoped-import scoped-factory scoped-factory-local-dxgi
     adapter-parent-local-dxgi control control-locked
     optiscaler-standalone optiscaler-proxy optiscaler-plugin optiscaler-late optiscaler-optin optiscaler-hidden
     optiscaler-shared optiscaler-forza optiscaler-forza-shared optiscaler-impostor optiscaler-fakenvapi
@@ -236,6 +236,7 @@ run_project ampere_runtime -DSTREAMLINE_ROOT="${root[streamline]}" \
     -DNGX_INCLUDE_DIR="${root[streamline]}/external/ngx-sdk/include" -DVULKAN_INCLUDE_DIR="${root[vulkan12]}"
 run_project xmx -DSTREAMLINE_ROOT="${root[streamline]}" -DXESS_SDK_ROOT="${root[xess]}" \
     -DMFG_GENERATED_DIR="$build/generated" -DMFG_PAYLOAD_DLL="$dll" -DXMX_RUNTIME_DIR="${root[xess]}/bin"
+run_project anr -DSTREAMLINE_ROOT="${root[streamline]}"
 run_project dlss5 -DSTREAMLINE_ROOT="${root[streamline]}" -DDLSS5_CANDIDATE_DLL="$dll"
 run_regression_project
 

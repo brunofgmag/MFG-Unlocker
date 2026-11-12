@@ -223,7 +223,8 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
             xess/sdk_pacing.cpp xess/game_profile.cpp xess/runtime_payload.cpp xess/xess_runtime.cpp
             xess/host_unlock.cpp xess/intel_native.cpp xess/motion_fill.cpp xess/hudless_match.cpp xess/cuda/cuda_route.cpp xess/cuda/provider_list.cpp
             xess/d3d12_host.cpp xess/host_xell_binding.cpp
-            xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_context.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp)
+            xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_context.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp
+            anr/anr.cpp)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_programs.rc" xess_programs 1 3901 "${MFG_GENERATED}" packed_programs)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_shaders.rc" xess_shaders 2 3902 "${MFG_GENERATED}" packed_shaders)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xefg_cuda.rc" xefg_cuda 3 3903 "${MFG_GENERATED}" packed_cuda)

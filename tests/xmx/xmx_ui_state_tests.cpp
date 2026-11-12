@@ -104,9 +104,55 @@ void ModelCombo()
                 state.xmxSaved = saved;
                 const bool blocked = standalone || refused;
                 Check(xess_ui::XmxRefused(state) == blocked, "XMX is refused by standalone or by a refusal");
-                Check(xess_ui::XmxModelLocked(state) == (blocked && !saved),
-                    "the model combo is locked only while refused and not saved on, so a saved XMX can go back to NVIDIA");
+                state.anrRefusal = refused ? "translated_gpu" : "";
+                Check(xess_ui::ModelLocked(state) == (blocked && !saved),
+                    "the model combo is locked only while both models are refused and none is saved, so a saved XMX "
+                    "can go back to NVIDIA");
             }
+}
+
+void AnrModel()
+{
+    xess_ui::State state;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eNvidia, "no saved key shows NVIDIA");
+    state.anrSaved = TRUE;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eAnr, "a saved anr key shows ANR FG");
+    state.xmxSaved = TRUE;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eXmx, "XMX wins the combo when both keys are saved, as it does at the latch");
+    state = {};
+    Check(!xess_ui::ModelRefused(state, xess_ui::Model::eAnr), "ANR FG can be picked by default");
+    state.anrRefusal = "xmx";
+    Check(!xess_ui::AnrRefused(state), "XMX's refusal does not stop picking ANR FG, which turns XMX off");
+    state.anrRefusal = "translated_gpu";
+    Check(xess_ui::ModelRefused(state, xess_ui::Model::eAnr), "a translated GPU refuses picking ANR FG");
+    state.anrRefusal.clear();
+    state.xemfgStandalone = TRUE;
+    Check(xess_ui::ModelRefused(state, xess_ui::Model::eAnr), "XeMFG standalone refuses picking ANR FG");
+    Check(!xess_ui::ModelRefused(state, xess_ui::Model::eNvidia), "NVIDIA can always be picked");
+    state = {};
+    state.xmxRefusal = "translated_gpu";
+    Check(!xess_ui::ModelLocked(state), "the combo stays open while ANR FG can still be picked");
+    state = {};
+    state.anrSaved = TRUE;
+    Check(xess_ui::ModelRestartPending(state), "a saved ANR FG that is not latched waits for a restart");
+    state.anrLatched = TRUE;
+    Check(!xess_ui::ModelRestartPending(state), "a latched ANR FG waits for nothing");
+    state = {};
+    state.anrSaved = TRUE;
+    state.xmxSaved = TRUE;
+    state.xmxLatched = TRUE;
+    state.anrRefusal = "xmx";
+    Check(!xess_ui::ModelRestartPending(state), "ANR FG held off by a running XMX is not a pending restart");
+    state = {};
+    state.anrLatched = TRUE;
+    state.anrFailure = "not found";
+    Check(xess_ui::AnrFailed(state), "a latched ANR FG with a failure and no evaluate has failed");
+    state.anrEvaluating = TRUE;
+    Check(!xess_ui::AnrFailed(state), "an evaluating ANR FG has not failed");
+    const auto read = Parse("{\"anrSaved\":true,\"anrLatched\":true,\"anrLoaded\":true,\"anrEvaluating\":false,"
+        "\"anrLive\":2,\"anrRefusal\":xmx,\"anrFailure\":gone}");
+    Check(read.anrSaved && read.anrLatched && read.anrLoaded && !read.anrEvaluating && read.anrLive == 2
+            && read.anrRefusal == "xmx" && read.anrFailure == "gone", "the ANR fields are read from the status");
 }
 }
 
@@ -115,5 +161,6 @@ int main()
     Reading();
     Rows();
     ModelCombo();
+    AnrModel();
     return gChecks != 0 && gFailures == 0 ? 0 : 1;
 }
