@@ -30,12 +30,27 @@ std::array<Binding,4> bindings{};
 std::mutex publication;
 std::atomic<uint64_t> observed{0}, parentCalls{0};
 
-bool SystemDxgi(HMODULE& image) noexcept {
-    wchar_t expected[MAX_PATH]{},actual[MAX_PATH]{};
-    image=GetModuleHandleW(L"dxgi.dll");
-    return image && GetSystemDirectoryW(expected,MAX_PATH)
-        && !wcscat_s(expected,L"\\dxgi.dll")
-        && GetModuleFileNameW(image,actual,MAX_PATH) && !_wcsicmp(expected,actual);
+bool DxgiLoaded() noexcept {
+    return GetModuleHandleW(L"dxgi.dll")!=nullptr;
+}
+bool ExecutableImagePage(const void* address) noexcept {
+    MEMORY_BASIC_INFORMATION memory{};
+    return address && VirtualQuery(address,&memory,sizeof(memory))==sizeof(memory)
+        && memory.Type==MEM_IMAGE && memory.State==MEM_COMMIT
+        && !(memory.Protect&(PAGE_GUARD|PAGE_NOACCESS))
+        && (memory.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY));
+}
+void* PinnedParentEntry(IUnknown* object) noexcept {
+    if (!native::PinInterface(object,2)) return nullptr;
+    ComPtr<IDXGIAdapter> adapter;
+    if (FAILED(object->QueryInterface(IID_PPV_ARGS(&adapter)))||!adapter) return nullptr;
+    if (!DxgiLoaded()||!HookMitigationsSupported()) return nullptr;
+    void* const target=(*reinterpret_cast<void***>(adapter.Get()))[6];
+    HMODULE pinned=nullptr;
+    return ExecutableImagePage(target)
+        && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+            reinterpret_cast<LPCWSTR>(target),&pinned)
+        ? target : nullptr;
 }
 bool Current(const Binding& b) noexcept {
     return b.target && b.relay && !memcmp(b.target,b.published.data(),b.published.size())
@@ -62,9 +77,7 @@ template<size_t I> HRESULT STDMETHODCALLTYPE GetParent(IDXGIObject* object,REFII
         return original(object,iid,output);
     // The callable is learned only from QI(IDXGIAdapter). Do not route another
     // object's shared method through the overlay, or infer a private layout.
-    HMODULE dxgi=nullptr;
-    if (!SystemDxgi(dxgi)||!native::SystemDxgiObject(object,9)
-        ||(*reinterpret_cast<void***>(object))[6]!=binding.target)
+    if (!DxgiLoaded()||(*reinterpret_cast<void***>(object))[6]!=binding.target)
         return original(object,iid,output);
     ++parentCalls;
     return proxy::ParentFactoryCall(original,object,iid,output);
@@ -79,16 +92,8 @@ void ObserveAdapter(IUnknown* object,const wchar_t* armed) noexcept {
     InternalScope internal;
     // No probing, adapter enumeration, replacement adapter, or native vtable
     // writes. Inspect only the caller's actual, successfully queried adapter.
-    if (!native::PinInterface(object,2)) return;
-    ComPtr<IDXGIAdapter> adapter;
-    if (FAILED(object->QueryInterface(IID_PPV_ARGS(&adapter)))||!adapter) return;
-    HMODULE dxgi=nullptr;
-    if (!SystemDxgi(dxgi)||!native::SystemDxgiObject(adapter.Get(),9)||!HookMitigationsSupported()) return;
-    void* target=(*reinterpret_cast<void***>(adapter.Get()))[6];
-    if (!slots::ImageEntry(dxgi,target)) return;
-    HMODULE pinned=nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(target),&pinned)||pinned!=dxgi) return;
+    void* const target=PinnedParentEntry(object);
+    if (!target) return;
     ++observed;
     std::lock_guard lock(publication);
     size_t index=bindings.size();

@@ -21,6 +21,7 @@
 #include "fg_lifetime_tracker.h"
 #include "xess/vulkan/vk_host.h"
 #include "xess/d3d12_host.h"
+#include "xmx/xmx.h"
 #if MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY
 #include "midpoint_fix.h"
 #endif
@@ -1348,6 +1349,30 @@ dlss5::Api Dlss5Api(const Route& route,CreateFn create,EvaluateFn evaluate,Relea
     return api;
 }
 
+bool RuntimeStandInAnswers(xmx::ProviderCall call, const xmx::ProviderArgs& args, NVSDK_NGX_Result& result) noexcept
+{
+    return xmx::AnswerNgxCall(xmx::NgxLayer::eRuntime, call, args, result);
+}
+
+bool RuntimeStandInCreate(ID3D12GraphicsCommandList* command, NVSDK_NGX_Feature feature,
+    const NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** output, NVSDK_NGX_Result& result) noexcept
+{
+    return RuntimeStandInAnswers(xmx::ProviderCall::eCreate,
+        {command, static_cast<uintptr_t>(feature), parameters, output}, result);
+}
+
+bool RuntimeStandInEvaluate(ID3D12GraphicsCommandList* command, const NVSDK_NGX_Handle* handle,
+    const NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Result& result) noexcept
+{
+    return RuntimeStandInAnswers(xmx::ProviderCall::eEvaluate,
+        {command, reinterpret_cast<uintptr_t>(handle), parameters, nullptr}, result);
+}
+
+bool RuntimeStandInRelease(uintptr_t handle, NVSDK_NGX_Result& result) noexcept
+{
+    return RuntimeStandInAnswers(xmx::ProviderCall::eRelease, {nullptr, handle, nullptr, nullptr}, result);
+}
+
 template<size_t I> NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList* command,
     NVSDK_NGX_Feature feature, const NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** output)
 {
@@ -1380,6 +1405,8 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Create(ID3D12GraphicsCommandList*
 #if MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY
             if (frameGeneration && midpoint_fix::OutputPullMaskRequiresRestart()) return kRejected;
 #endif
+            NVSDK_NGX_Result standIn = kRejected;
+            if (trackedRoute && RuntimeStandInCreate(command, feature, parameters, output, standIn)) return standIn;
             // Native NGX may wait for a provider callback on another thread.
             // Ada/unmodified calls must not inherit Ampere's TLS lifecycle lock.
             fault_capture::NgxCall call(entry, _ReturnAddress(), command,
@@ -1770,13 +1797,16 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Evaluate(ID3D12GraphicsCommandLis
         if (gpu_dispatch::Selected() == gpu_dispatch::Family::eConflict) return kRejected;
         const auto before = gpu_dispatch::UsesNativeProgram() ? gRoutes[I].beforeEvaluate : nullptr;
         const auto entry = gRoutes[I].evaluate;
-        const bool runtime = gRoutes[I].runtime && dlss_sr::Active();
+        const bool runtimeRoute = gRoutes[I].runtime;
+        const bool runtime = runtimeRoute && dlss_sr::Active();
         const auto create = runtime ? RouteOriginal<CreateFn>(gRoutes[I], gRoutes[I].create) : nullptr;
         const auto release = runtime ? RouteRelease(gRoutes[I], gRoutes[I].release) : nullptr;
         const auto nrApi=runtime ? Dlss5Api(gRoutes[I],create,original,release) : dlss5::Api{};
         lock.unlock();
         if (before) before(command, reinterpret_cast<uintptr_t>(handle), parameters,
             reinterpret_cast<void*>(callback), 0, 0, entry, _ReturnAddress());
+        NVSDK_NGX_Result standIn = kRejected;
+        if (runtimeRoute && RuntimeStandInEvaluate(command, handle, parameters, standIn)) return standIn;
         // A DLSS SR feature of the game may be evaluated through our replacement.
         const NVSDK_NGX_Handle* target = runtime
             ? dlss_sr::Evaluate(I, create, release, command, handle, parameters) : handle;
@@ -2019,9 +2049,16 @@ NVSDK_NGX_Result AmpereRelease(size_t I, std::unique_lock<std::recursive_mutex>&
 template<size_t I> NVSDK_NGX_Result NVSDK_CONV Release(NVSDK_NGX_Handle* handle)
 {
     std::unique_lock lock(gCalls);
+    const uintptr_t handleValue = reinterpret_cast<uintptr_t>(handle);
+    if (gRoutes[I].runtime && !gpu_dispatch::UsesTranslatedProgram())
+    {
+        lock.unlock();
+        NVSDK_NGX_Result standIn = kRejected;
+        if (RuntimeStandInRelease(handleValue, standIn)) return standIn;
+        lock.lock();
+    }
     const auto original = RouteRelease(gRoutes[I], gRoutes[I].release);
     if (!original) return NVSDK_NGX_Result_FAIL_NotInitialized;
-    const uintptr_t handleValue = reinterpret_cast<uintptr_t>(handle);
     if (!gpu_dispatch::UsesTranslatedProgram())
     {
         OtherFeatureLease lease{};
@@ -2060,6 +2097,51 @@ template<size_t I> NVSDK_NGX_Result NVSDK_CONV Release(NVSDK_NGX_Handle* handle)
 }
 
 NVSDK_NGX_Result NVSDK_CONV RejectProviderCall(void*, uintptr_t, const void*, void*) noexcept { return kRejected; }
+
+thread_local bool tProviderHandled = false;
+thread_local NVSDK_NGX_Result tProviderResult = kRejected;
+
+NVSDK_NGX_Result NVSDK_CONV RejectOrAnswerCall(void* arg1, uintptr_t arg2, const void* arg3, void* arg4) noexcept
+{
+    if (!tProviderHandled) return RejectProviderCall(arg1, arg2, arg3, arg4);
+    tProviderHandled = false;
+    return tProviderResult;
+}
+
+void* RejectedTargetFor(entry_detour::Kind kind) noexcept
+{
+    const bool provider = kind == entry_detour::Kind::eNgxD3D12CreateFeature
+        || kind == entry_detour::Kind::eNgxD3D12EvaluateFeature || kind == entry_detour::Kind::eAmpereRelease;
+    return provider ? reinterpret_cast<void*>(&RejectOrAnswerCall) : reinterpret_cast<void*>(&RejectProviderCall);
+}
+
+bool XmxAnswers(entry_detour::Kind kind, void* arg1, uintptr_t arg2, const void* arg3, void* arg4) noexcept
+{
+    xmx::ProviderCall call{};
+    xmx::ProviderArgs args{};
+    switch (kind)
+    {
+    case entry_detour::Kind::eNgxD3D12CreateFeature:
+        call = xmx::ProviderCall::eCreate;
+        args = {arg1, arg2, arg3, arg4};
+        break;
+    case entry_detour::Kind::eNgxD3D12EvaluateFeature:
+        call = xmx::ProviderCall::eEvaluate;
+        args = {arg1, arg2, arg3, nullptr};
+        break;
+    case entry_detour::Kind::eAmpereRelease:
+        call = xmx::ProviderCall::eRelease;
+        args = {nullptr, reinterpret_cast<uintptr_t>(arg1), nullptr, nullptr};
+        break;
+    default:
+        return false;
+    }
+    NVSDK_NGX_Result result = kRejected;
+    if (!xmx::AnswerNgxCall(xmx::NgxLayer::eProvider, call, args, result)) return false;
+    tProviderResult = result;
+    tProviderHandled = true;
+    return true;
+}
 
 bool WINAPI ProviderGate(void* arg1, uintptr_t arg2, const void* arg3, void* arg4,
     uintptr_t arg5, uintptr_t arg6, entry_detour::Handle entry, const void* caller) noexcept
@@ -2103,6 +2185,7 @@ bool WINAPI ProviderGate(void* arg1, uintptr_t arg2, const void* arg3, void* arg
             || selectedEntry.kind == entry_detour::Kind::eNgxD3D12EvaluateFeature)
             && midpoint_fix::OutputPullMaskRequiresRestart()) return false;
 #endif
+        if (XmxAnswers(selectedEntry.kind, arg1, arg2, arg3, arg4)) return false;
         fault_capture::ProviderForward(entry, caller, arg1, arg2, arg3);
         return true;
     }
@@ -3046,13 +3129,14 @@ bool InstallExport(Route& route, const char* name, entry_detour::Kind kind, void
     if (!route.runtime && (kind == entry_detour::Kind::eNgxD3D12CreateFeature
             || kind == entry_detour::Kind::eNgxD3D12EvaluateFeature || kind == entry_detour::Kind::eAmpereRelease))
         return entry_detour::InstallForwarding(kind, route.module, target, nullptr, trampoline,
-            options, &handle, &ProviderGate, reinterpret_cast<void*>(&RejectProviderCall));
+            options, &handle, &ProviderGate, RejectedTargetFor(kind));
     // The provider's Vulkan Release keeps NVIDIA's runtime caller too.
     if (!route.runtime && kind == entry_detour::Kind::eAmpereVulkanRelease)
         return entry_detour::InstallForwarding(kind, route.module, target, nullptr, trampoline,
             options, &handle, &VulkanProviderGate, reinterpret_cast<void*>(&RejectProviderCall));
     return entry_detour::Install(kind, route.module, target, hook, trampoline, options, &handle);
 }
+
 
 // RTX 30 systems: the runtime's Vulkan Release (exact feature lifetime), its
 // Vulkan requirements and capability parameters (startup bootstrap). True when
@@ -3103,6 +3187,24 @@ bool InstallD3D11Route(Route& route, size_t index) noexcept
         Report(detail);
     }
     return installed;
+}
+
+bool InstallRouteExports(Route& route, size_t i, bool runtime) noexcept
+{
+    if (runtime && (!InstallExport(route, "NVSDK_NGX_D3D12_GetFeatureRequirements", entry_detour::Kind::eAmpereRequirements,
+            reinterpret_cast<void*>(kRequirements[i]), route.requirements)
+        || !InstallExport(route, "NVSDK_NGX_D3D12_GetCapabilityParameters", entry_detour::Kind::eAmpereParameters,
+            reinterpret_cast<void*>(kParameters[i]), route.parameters))) return false;
+    // Install Release and Evaluate first. No successful FG Create can escape
+    // before its exact handle lifetime and evaluation boundary are covered.
+    if (!InstallExport(route, "NVSDK_NGX_D3D12_ReleaseFeature", entry_detour::Kind::eAmpereRelease,
+            reinterpret_cast<void*>(kReleases[i]), route.release)
+        || !InstallExport(route, "NVSDK_NGX_D3D12_EvaluateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12EvaluateFeature : entry_detour::Kind::eNgxD3D12EvaluateFeature,
+            reinterpret_cast<void*>(kEvaluates[i]), route.evaluate)) return false;
+    const bool created = InstallExport(route, "NVSDK_NGX_D3D12_CreateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12CreateFeature : entry_detour::Kind::eNgxD3D12CreateFeature,
+        reinterpret_cast<void*>(kCreates[i]), route.create);
+    if (runtime && created) InstallD3D11Route(route, i);
+    return created;
 }
 
 bool ReadOnlyImageSpan(const Image& image, uintptr_t address, size_t bytes) noexcept
@@ -4082,6 +4184,15 @@ void ObserveModule(HMODULE module, const wchar_t* path, uint64_t generation,
         route->availability.Set(true);
 }
 
+namespace
+{
+bool NoteRoute(bool runtime, bool installed) noexcept
+{
+    if (!runtime) xmx::NoteProviderRoute(installed);
+    return installed;
+}
+}
+
 bool InstallRoute(HMODULE module, const wchar_t* path, uint64_t generation, bool runtime,
     entry_detour::ForwardPreCall beforeCreate, entry_detour::ForwardPreCall beforeEvaluate) noexcept
 {
@@ -4092,9 +4203,9 @@ bool InstallRoute(HMODULE module, const wchar_t* path, uint64_t generation, bool
     // included), RTX 30 its own (Ada-only builds excluded).
     if (!runtime && !(gpu_dispatch::UsesNativeProgram()
             ? dlssg_provider_policy::IsSupportedProvider(module, path)
-            : dlssg_provider_policy::IsSupportedAmpereProvider(module, path))) return false;
+            : dlssg_provider_policy::IsSupportedAmpereProvider(module, path))) return NoteRoute(runtime, false);
     auto* route = FindRoute(module, generation);
-    if (!route) return false;
+    if (!route) return NoteRoute(runtime, false);
     route->runtime = runtime;
     // Prove the private driver layout before installing any mutating callback.
     // A native intermediary continues to the separately verified runtime. If
@@ -4109,22 +4220,7 @@ bool InstallRoute(HMODULE module, const wchar_t* path, uint64_t generation, bool
     }
     if (beforeCreate) route->beforeCreate = beforeCreate;
     if (beforeEvaluate) route->beforeEvaluate = beforeEvaluate;
-    const size_t i = route - gRoutes.data();
-    if (runtime && (!InstallExport(*route, "NVSDK_NGX_D3D12_GetFeatureRequirements", entry_detour::Kind::eAmpereRequirements,
-            reinterpret_cast<void*>(kRequirements[i]), route->requirements)
-        || !InstallExport(*route, "NVSDK_NGX_D3D12_GetCapabilityParameters", entry_detour::Kind::eAmpereParameters,
-            reinterpret_cast<void*>(kParameters[i]), route->parameters))) return false;
-    // Install Release and Evaluate first. No successful FG Create can escape
-    // before its exact handle lifetime and evaluation boundary are covered.
-    if (!InstallExport(*route, "NVSDK_NGX_D3D12_ReleaseFeature", entry_detour::Kind::eAmpereRelease,
-            reinterpret_cast<void*>(kReleases[i]), route->release)
-        || !InstallExport(*route, "NVSDK_NGX_D3D12_EvaluateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12EvaluateFeature : entry_detour::Kind::eNgxD3D12EvaluateFeature,
-            reinterpret_cast<void*>(kEvaluates[i]), route->evaluate)) return false;
-    const bool created = InstallExport(*route, "NVSDK_NGX_D3D12_CreateFeature", runtime ? entry_detour::Kind::eNgxRuntimeD3D12CreateFeature : entry_detour::Kind::eNgxD3D12CreateFeature,
-        reinterpret_cast<void*>(kCreates[i]), route->create);
-    // dx11nr.1: the D3D11 entries once the D3D12 ones are ours (the bridge runs DLSS 5 through their trampolines).
-    if (runtime && created) InstallD3D11Route(*route, i);
-    return created;
+    return NoteRoute(runtime, InstallRouteExports(*route, route - gRoutes.data(), runtime));
 }
 
 OptiScalerNgxRoute InstallOptiScalerNgxRoute(HMODULE optiscaler) noexcept

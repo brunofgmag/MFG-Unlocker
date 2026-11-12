@@ -81,7 +81,7 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = [(f'default-{mode}', 'StartupDefaultsTests', mode, 'winmm.dll')
-             for mode in ('clean', 'legacy', 'fixed', 'dynamic', 'follow', 'environment')]
+             for mode in ('clean', 'legacy', 'fixed', 'dynamic', 'follow', 'environment', 'xmx', 'xmx-standalone')]
     cases += [('loader-version', 'ReleaseLoadCheck', 'loader', 'version.dll'),
               ('crash-reporter-host', 'ReleaseLoadCheck', 'crash-reporter', 'winmm.dll'),
               # pluginprov.2: a CEF helper (BeamNG.drive starts its own executable with --type=renderer).
@@ -97,6 +97,8 @@ def main():
               ('status-transport', 'StatusTransportTests', '', 'winmm.dll'),
               ('scoped-import', 'ScopedImportTests', '', 'winmm.dll'),
               ('scoped-factory', 'ScopedFactoryTests', '', 'winmm.dll'),
+              ('scoped-factory-local-dxgi', 'ScopedFactoryTests', 'local-dxgi', 'winmm.dll'),
+              ('adapter-parent-local-dxgi', 'AdapterParentTests', 'local-dxgi', 'winmm.dll'),
               ('factory-revision-menu', 'WarpPresentHarness', 'factory-revision-menu', 'winmm.dll'),
               ('factory-revision-present', 'WarpPresentHarness', 'factory-revision-present', 'winmm.dll'),
               ('factory-revision-unsupported', 'WarpPresentHarness', 'factory-revision-unsupported', 'winmm.dll'),
@@ -237,6 +239,8 @@ def main():
         if (harness/'hotpatch'/'sl.interposer.dll').is_file():
             (destination/'hotpatch').mkdir()
             shutil.copy2(harness/'hotpatch'/'sl.interposer.dll', destination/'hotpatch'/'sl.interposer.dll')
+        if name.endswith('-local-dxgi'):
+            shutil.copy2(harness/'DxgiForwarderFixture.dll', destination/'dxgi.dll')
         candidate = destination/proxy
         shutil.copy2(dll, candidate)
         if mode.startswith('xefg-'):

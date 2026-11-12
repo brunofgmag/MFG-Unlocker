@@ -542,6 +542,13 @@ void ApplyHdr10Flag(State& state, HMODULE fg) noexcept
     catch (...) {}
 }
 
+void CreateUnlock(State& state, HMODULE fg, HMODULE ll, bool keep2xModel)
+{
+    state.unlock = std::make_unique<xess_host_unlock::Unlock>(fg, ll, static_cast<uint8_t>(kGeneratedCapacity),
+        keep2xModel);
+    state.unlockFg = fg;
+}
+
 // Under fgMutex. Applies the frame-count unlock on first use; later callers must name the
 // same provider image and the same 2x-model choice. Returns the applied site names as a JSON
 // string list body.
@@ -549,9 +556,7 @@ std::string AcquireUnlock(State& state, HMODULE fg, HMODULE ll, bool keep2xModel
 {
     if (!state.unlock)
     {
-        state.unlock = std::make_unique<xess_host_unlock::Unlock>(fg, ll, static_cast<uint8_t>(kGeneratedCapacity),
-            keep2xModel);
-        state.unlockFg = fg;
+        CreateUnlock(state, fg, ll, keep2xModel);
         ApplySceneDetector(state, fg);
         ApplyOutputRing(state, fg);
         ApplyHdr10Flag(state, fg);
@@ -1083,6 +1088,23 @@ void PreparePresent(void* swapchain, uint64_t generation) noexcept
 // The shader and model port on OptiScaler's provider image, then the
 // frame-count unlock without the 2x-model site (XeFG remaps its 2x model to the ported model 16 for more than one
 // generated frame). Before OptiScaler's first XeFG creation; kept for the process lifetime. Under fgMutex.
+struct Ports
+{
+    std::unique_ptr<ShaderPort> shaders;
+    std::unique_ptr<ModelPort> model;
+};
+
+Ports BuildPorts(State& state, HMODULE fg, UINT vendor)
+{
+    Configuration(state);
+    Ports ports;
+    ports.shaders = std::make_unique<ShaderPort>(fg, Self(), state.root, vendor);
+    for (const char* key : kReconstructionPrograms)
+        if (!ports.shaders->hasProgram(key)) throw std::runtime_error("reconstruction_program_pair_missing");
+    ports.model = std::make_unique<ModelPort>(fg, true, true);
+    return ports;
+}
+
 // hostport.1: an idle tracked unlock on this image (its port restored with its last context) is published on again.
 std::string PublishHostPort(State& state, HMODULE fg, HMODULE ll, UINT vendor)
 {
@@ -1093,14 +1115,10 @@ std::string PublishHostPort(State& state, HMODULE fg, HMODULE ll, UINT vendor)
     port.unlockSameImage = state.unlock && state.unlockFg == fg;
     port.unlockKeeps2x = state.unlock && state.unlock->Keeps2xModel();
     if (!xess_host_port::MayPublishHostPort(port)) throw std::runtime_error("route_already_published");
-    Configuration(state);
-    auto shaders = std::make_unique<ShaderPort>(fg, Self(), state.root, vendor);
-    for (const char* key : kReconstructionPrograms)
-        if (!shaders->hasProgram(key)) throw std::runtime_error("reconstruction_program_pair_missing");
-    auto model = std::make_unique<ModelPort>(fg, true, true);
+    auto ports = BuildPorts(state, fg, vendor);
     const auto names = AcquireUnlock(state, fg, ll, false);
-    state.shaders = std::move(shaders);
-    state.model = std::move(model);
+    state.shaders = std::move(ports.shaders);
+    state.model = std::move(ports.model);
     state.hostPorted = true;
     return names;
 }
@@ -1113,6 +1131,52 @@ bool ProviderPortRequested() noexcept
     const bool ini = std::strcmp(choice.source, "optiscaler_ini") == 0;
     const bool control = std::strcmp(choice.source, "control") == 0;
     return ngx_provider::ProviderUsesPort(ini ? (choice.port ? 1u : 2u) : 0u, control && !choice.port);
+}
+
+bool MultiFrameModelPublishedOn(const State& state, HMODULE fg)
+{
+    return state.model && state.unlock && state.unlockFg == fg && !state.unlock->Keeps2xModel();
+}
+
+static void NoteError(std::string& error, const char* text) noexcept
+{
+    try
+    {
+        error = text;
+    }
+    catch (...)
+    {
+        error.clear();
+    }
+}
+
+bool PublishMultiFrameModel(HMODULE fg, HMODULE ll, std::string& error) noexcept
+{
+    try
+    {
+        auto& state = Get();
+        std::lock_guard lock(state.fgMutex);
+        if (state.model || state.unlock)
+        {
+            if (MultiFrameModelPublishedOn(state, fg)) return true;
+            throw std::runtime_error("route_already_published");
+        }
+        if (!state.contexts.empty()) throw std::runtime_error("context_predates_model_publication");
+        auto ports = BuildPorts(state, fg, adapter_support::kNvidiaVendor);
+        CreateUnlock(state, fg, ll, false);
+        state.shaders = std::move(ports.shaders);
+        state.model = std::move(ports.model);
+        return true;
+    }
+    catch (const std::exception& failure)
+    {
+        NoteError(error, failure.what());
+    }
+    catch (...)
+    {
+        NoteError(error, "unknown");
+    }
+    return false;
 }
 
 // OptiScaler's own XeFG output (FGOutput xefg). Its contexts stay untracked: no port,

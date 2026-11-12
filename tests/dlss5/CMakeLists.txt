@@ -78,3 +78,17 @@ set(DLSS5_CANDIDATE_DLL "" CACHE FILEPATH "Exact fresh unified DLL for config/st
 if(EXISTS "${DLSS5_CANDIDATE_DLL}")
  add_test(NAME dlss5-exact-dll-control COMMAND Dlss5ControlTests "${DLSS5_CANDIDATE_DLL}")
 endif()
+
+add_executable(Dlss5InputTests dlss5_input_tests.cpp "${NATIVE}/dlss5_provider.cpp")
+target_compile_features(Dlss5InputTests PRIVATE cxx_std_20)
+target_include_directories(Dlss5InputTests PRIVATE "${NATIVE}" "${STREAMLINE_ROOT}/external/ngx-sdk/include")
+target_compile_definitions(Dlss5InputTests PRIVATE MFG_DLSS5_TESTING=1 UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(Dlss5InputTests PRIVATE Dlss5TestMinHook d3d12 dxgi d3dcompiler)
+add_test(NAME dlss5-input-mips COMMAND Dlss5InputTests textures)
+add_test(NAME dlss5-shaders-compile COMMAND Dlss5InputTests shaders)
+
+add_executable(ProtectedPointerTests protected_pointer_tests.cpp)
+target_compile_features(ProtectedPointerTests PRIVATE cxx_std_20)
+target_include_directories(ProtectedPointerTests PRIVATE "${NATIVE}")
+target_compile_definitions(ProtectedPointerTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+add_test(NAME protected-pointer-image-slot COMMAND ProtectedPointerTests)

@@ -9,6 +9,8 @@
 #include "status_transport.h"
 #include "ui_status_json.h"
 #include "ui_input_coherence.h"
+#include "main_thread_waits.h"
+#include "reflex_sleep.h"
 #include "xess/xess_mod.h"
 #include "xess/cuda/cuda_route.h"
 #include "xess/vulkan/vk_host.h"
@@ -17,6 +19,9 @@
 #include "xess/sdk_pacing.h"
 #include "xess/ngx_provider.h"
 #include "xess/ngx_provider_policy.h"
+#include "xmx/xmx.h"
+#include "xmx/xmx_latency.h"
+#include "xmx/xmx_stand_in.h"
 #include "ampere_backend.h"
 #include "ampere_provider_arch.h"
 #include "adapter_discovery.h"
@@ -441,6 +446,10 @@ struct ControlConfig
     // Vulkan host above as the product's), off by default; xemfgFrames is its frame count (2-6, 0 = the fixed
     // multiplier, Follow = 2X). Takeover happens at a swap chain's creation: switching on applies after a restart.
     bool xemfgStandalone = false;
+    bool xmx = false;
+    bool reflexSleepSkip = false;
+    bool xmxXell = false;
+    bool xmxStandIn = false;
     uint32_t xemfgFrames = 0;
     // XeMFG standalone's Dynamic MFG (xess/xemfg_dynamic.h), up to xemfgFrames: its target (0 = the FPS
     // limit, else just under the refresh rate), rounding (0 at most, 1 nearest, 2 at least), 1X allowed, "Use target as
@@ -661,8 +670,6 @@ void WINAPI BeforeNgxD3D12EvaluateFeature(void*, uintptr_t, const void*, void*, 
 void WINAPI BeforeNgxRuntimeD3D12EvaluateFeature(void*, uintptr_t, const void*, void*, uintptr_t, uintptr_t, entry_detour::Handle, const void*) noexcept;
 bool TryInstallNgxCreateEntryDetour(HMODULE provider, const std::wstring& path,
     uint64_t generation);
-bool TryInstallNgxEvaluateEntryDetour(
-    HMODULE provider, const std::wstring& path, uint64_t generation);
 bool TryInstallNgxRuntimeCreateEntryDetour(
     HMODULE runtime, const std::wstring& path, uint64_t generation);
 bool TryInstallNgxRuntimeEvaluateEntryDetour(
@@ -1795,6 +1802,26 @@ bool TryParseControl(const char* data, size_t size, ControlConfig& control)
         && !TryParseUnsigned(content, "xemfgStandalone", 0, 1, xemfgStandalone))
         return false;
     parsed.xemfgStandalone = xemfgStandalone != 0;
+    uint32_t xmx = 0;
+    if (FindJsonValue(content, "xmx", xessOffset)
+        && !TryParseUnsigned(content, "xmx", 0, 1, xmx))
+        return false;
+    parsed.xmx = xmx != 0;
+    uint32_t reflexSleepSkip = 0;
+    if (FindJsonValue(content, "reflexSleepSkip", xessOffset)
+        && !TryParseUnsigned(content, "reflexSleepSkip", 0, 1, reflexSleepSkip))
+        return false;
+    parsed.reflexSleepSkip = reflexSleepSkip != 0;
+    uint32_t xmxXell = 0;
+    if (FindJsonValue(content, "xmxXell", xessOffset)
+        && !TryParseUnsigned(content, "xmxXell", 0, 1, xmxXell))
+        return false;
+    parsed.xmxXell = xmxXell != 0;
+    uint32_t xmxStandIn = parsed.xmx ? 1 : 0;
+    if (FindJsonValue(content, "xmxStandIn", xessOffset)
+        && !TryParseUnsigned(content, "xmxStandIn", 0, 1, xmxStandIn))
+        return false;
+    parsed.xmxStandIn = xmxStandIn != 0;
     if (FindJsonValue(content, "xemfgFrames", xessOffset)
         && !TryParseUnsigned(content, "xemfgFrames", 2, 6, parsed.xemfgFrames))
         return false;
@@ -1956,6 +1983,9 @@ ControlConfig EffectiveControl(const ControlConfig& saved) noexcept
     effective.dlss5.enabled = false;
     effective.vsyncMode = 0;
     effective.reflexFrameLimitFps = 0;
+    effective.reflexSleepSkip = false;
+    effective.xmxXell = false;
+    effective.xmxStandIn = false;
     effective.dynamicExperimental56 = false;
     effective.generatedOnlyDebug = false;
     if (!optiscaler_host::UiHidden() || optiscaler_menu_tab::Offered())
@@ -2182,6 +2212,21 @@ void ConfigureXemfg(const ControlConfig& control) noexcept
         control.xemfgAllow1x, control.xemfgTargetAsCap);
 }
 
+void ConfigureReflexSleep(const ControlConfig& control) noexcept
+{
+    if (reflex_sleep::Configure(control.reflexSleepSkip))
+        Log(control.reflexSleepSkip
+            ? L"Reflex sleep skip on: the game's slReflexSleep returns without reaching the driver"
+            : L"Reflex sleep skip off: the game's slReflexSleep reaches the driver again");
+    if (reflex_sleep::ConfigureXmxXell(control.xmxXell))
+        Log(control.xmxXell
+            ? L"XMX XeLL sleep on: the game's slReflexSleep goes to XeLL while XMX is latched"
+            : L"XMX XeLL sleep off: the game's slReflexSleep goes back to the driver");
+    xmx::low_latency::Configure(xmx::low_latency::HoldWanted(control.xmxXell, xmx::Latched()));
+    if (xmx::ConfigureStandIn(control.xmxStandIn))
+        Log(L"%s", xmx::stand_in::ConfigLine(control.xmxStandIn, xmx::Latched()));
+}
+
 // XeMFG replaces the game's DLSS Frame Generation (held at Off) while a host may run it.
 bool XemfgReplacesDlssg() noexcept
 {
@@ -2258,6 +2303,29 @@ std::string XemfgStatus(const ControlConfig& control)
         + LatencyPacingStatus(control);
 }
 
+xmx::Status ReadXmxStatus()
+{
+    const bool driverGenerating = gGameFrameGenerationOn.load(std::memory_order_acquire)
+        && gActualFramesPresented.load(std::memory_order_relaxed) > 1;
+    return xmx::ReadStatus(driverGenerating);
+}
+
+std::string XmxStatus(const ControlConfig& control)
+{
+    const auto report = ReadXmxStatus();
+    return std::string(",\"xmxSaved\":") + (control.xmx ? "true" : "false")
+        + ",\"xmxLatched\":" + (report.latched ? "true" : "false")
+        + ",\"xmxRefusal\":\"" + JsonEscapeUtf8(report.refusal) + "\""
+        + ",\"xmxHooked\":" + (report.hooked ? "true" : "false")
+        + ",\"xmxPartiallyHooked\":" + (report.partiallyHooked ? "true" : "false")
+        + ",\"xmxGenerating\":" + (report.generating ? "true" : "false")
+        + ",\"xmxEvaluating\":" + (report.evaluating ? "true" : "false")
+        + ",\"xmxBypassed\":" + (report.bypassed ? "true" : "false")
+        + ",\"xmxFramesLimit\":" + std::to_string(report.framesLimit)
+        + ",\"xmxIdle\":\"" + JsonEscapeUtf8(report.idle) + "\""
+        + ",\"xmxFailure\":\"" + JsonEscapeUtf8(report.failure) + "\"";
+}
+
 // The XeMFG Vulkan host's status, with or without the D3D12 XeSS route.
 std::string XessVulkanStatus(const ControlConfig& control)
 {
@@ -2283,7 +2351,7 @@ std::string XessStatusFragment(const ControlConfig& control)
     const auto snapshot = xess_mod::ReadSnapshot();
     if (!snapshot)
         return std::string(",\"xessAvailable\":false,\"activeFrameGeneration\":\"")
-            + ActiveFrameGeneration(false) + "\"" + XessVulkanStatus(control);
+            + ActiveFrameGeneration(false) + "\"" + XessVulkanStatus(control) + XmxStatus(control);
     const uint64_t now = GetTickCount64();
     const uint64_t nativeAge = snapshot->nativeActivityTick && now >= snapshot->nativeActivityTick
         ? now - snapshot->nativeActivityTick : UINT64_MAX;
@@ -2309,6 +2377,7 @@ std::string XessStatusFragment(const ControlConfig& control)
     return numbers
         + std::string(",\"xessModel\":") + std::to_string(control.xessModel)
         + XessVulkanStatus(control)
+        + XmxStatus(control)
         + ",\"xessModelActive\":" + std::to_string(snapshot->modelActive)
         + ",\"xessProviderFailing\":" + (snapshot->providerFailing ? "true" : "false")
         + ",\"xessTensorCores\":" + std::to_string(static_cast<uint32_t>(tensorCores.state))
@@ -3225,7 +3294,7 @@ bool WriteBridgeStatus(const ControlConfig& control, DWORD pid, bool disk = true
     else if (reflex.refusedModule)
         strcpy_s(refusedReflex, "unreadable");
     char pacing[2048]{};
-    sprintf_s(pacing, ",\"vsyncMode\":%u,\"reflexFrameLimitFps\":%u,"
+    sprintf_s(pacing, ",\"vsyncMode\":%u,\"reflexFrameLimitFps\":%u,\"reflexSleepSkip\":%s,\"xmxXell\":%s,\"xmxXellReady\":%s,\"xmxStandIn\":%s,\"xmxStandInLive\":%u,"
         "\"dynamicVsyncAvailable\":%s,\"vsyncControlAvailable\":%s,"
         "\"vsyncOverrideApplied\":%s,\"vsyncPresentationObserved\":%s,"
         "\"vsyncOriginalInterval\":%u,\"vsyncSubmittedInterval\":%u,\"vsyncFailure\":%u,"
@@ -3237,7 +3306,9 @@ bool WriteBridgeStatus(const ControlConfig& control, DWORD pid, bool disk = true
         "\"reflexHookMask\":%u,\"reflexModuleVersionMajor\":%u,"
         "\"reflexModuleVersionMinor\":%u,\"reflexModuleVersionPatch\":%u,"
         "\"reflexModuleGeneration\":%llu,\"reflexRefusedVersion\":\"%s\"",
-        control.vsyncMode, control.reflexFrameLimitFps,
+        control.vsyncMode, control.reflexFrameLimitFps, control.reflexSleepSkip ? "true" : "false",
+        control.xmxXell ? "true" : "false", xmx::latency::Ready() ? "true" : "false",
+        control.xmxStandIn ? "true" : "false", static_cast<uint32_t>(xmx::StandInLive()),
         VsyncRuntimeCurrent() && DynamicMfgSupported() ? "true" : "false",
         vsync.available ? "true" : "false", vsync.overrideApplied ? "true" : "false",
         vsync.matched ? "true" : "false", vsync.originalInterval, vsync.submittedInterval,
@@ -5584,13 +5655,6 @@ void WINAPI BeforeNgxRuntimeD3D12EvaluateFeature(void* commandList,
         originalCaller);
 }
 
-bool TryInstallNgxEvaluateEntryDetour(
-    HMODULE provider, const std::wstring& path, uint64_t generation)
-{
-    return ampere_backend::InstallRoute(provider, path.c_str(), generation, false,
-        &BeforeNgxD3D12CreateFeature, &BeforeNgxD3D12EvaluateFeature);
-}
-
 bool TryInstallNgxRuntimeCreateEntryDetour(
     HMODULE runtime, const std::wstring& path, uint64_t generation)
 {
@@ -7208,6 +7272,7 @@ sl::Result HookSlPclSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame)
     ProbeMarker(static_cast<uint32_t>(marker), id, latency_probe::kSourcePcl);
     const sl::Result result = original(marker, frame);
     xess_d3d12::LatencyMarker(static_cast<uint32_t>(marker), id);
+    xmx::latency::Marker(static_cast<uint32_t>(marker), id);
     return result;
 }
 
@@ -7225,6 +7290,7 @@ sl::Result HookSlReflexSetMarker(uint32_t marker, const sl::FrameToken& frame)
     ProbeMarker(marker, id, latency_probe::kSourceReflexLegacy);
     const sl::Result result = original(marker, frame);
     xess_d3d12::LatencyMarker(marker, id);
+    xmx::latency::Marker(marker, id, "reflex");
     return result;
 }
 
@@ -7244,15 +7310,33 @@ sl::Result HookSlReflexSleep(const sl::FrameToken& frame)
     sdk_pacing::HostSleepScope sleepScope(sdk_pacing::HostSleepSource::kReflex);
     // While XeMFG generates, the frame sleeps in XeLL only (the driver's Reflex sleep would be a second pacer,
     // judging the game by XeFG's extra presents: a 30 fps base fell to 17).
-    if (xess_d3d12::ReplacesReflexSleep())
+    const int64_t waitStart = main_thread_waits::Now();
+    const bool xmxXell = reflex_sleep::XmxXell() && xmx::Latched() && xmx::latency::Ready();
+    const auto route = reflex_sleep::Choose(xess_d3d12::ReplacesReflexSleep(), xmxXell, reflex_sleep::Skipping());
+    if (route == reflex_sleep::Route::Xell)
     {
         static std::atomic<bool> logged{false};
         if (!logged.exchange(true, std::memory_order_relaxed))
             Log(L"XeMFG standalone: the game's Reflex sleep goes to XeLL while XeMFG generates");
         xess_d3d12::LatencySleep(id, false);
+        main_thread_waits::NoteReflexSleep(waitStart, main_thread_waits::Now());
+        return sl::Result::eOk;
+    }
+    if (route == reflex_sleep::Route::XmxXell && xmx::latency::Sleep(id))
+    {
+        main_thread_waits::NoteReflexSleep(waitStart, main_thread_waits::Now());
+        main_thread_waits::NoteXellSleep();
+        xess_d3d12::LatencySleep(id, true);
+        return sl::Result::eOk;
+    }
+    if (route == reflex_sleep::Route::Skip)
+    {
+        main_thread_waits::NoteReflexSkip();
+        xess_d3d12::LatencySleep(id, true);
         return sl::Result::eOk;
     }
     const sl::Result result = original(frame);
+    main_thread_waits::NoteReflexSleep(waitStart, main_thread_waits::Now());
     xess_d3d12::LatencySleep(id, result == sl::Result::eOk);
     return result;
 }
@@ -7310,24 +7394,28 @@ void WrapLatencyFunction(sl::Feature feature, const char* functionName, void*& f
 {
     // xemfglive.1: also while XeMFG is off but could be switched on live (the wrappers then only forward).
     const bool xemfg = xess_d3d12::Ready();
+    const bool reflexSleep = feature == sl::kFeatureReflex && strcmp(functionName, "slReflexSleep") == 0;
     // sleepsight.1: XeMFG on its other routes (OptiScaler's, the game's own XeFG): the game's Reflex sleep is timed
     // only (ObserveReflexSleep; optisleep.1's sleep point under OptiScaler). While XeMFG standalone could start
     // (Ready), HookSlReflexSleep below times it the same way (HostSleepScope).
-    if (!xemfg && xess_mod::Active() && feature == sl::kFeatureReflex && strcmp(functionName, "slReflexSleep") == 0)
+    if (!xemfg && xess_mod::Active() && reflexSleep)
     {
         ObserveReflexSleep(function);
+        return;
+    }
+    if (reflexSleep)
+    {
+        WrapFeatureFunction(gOriginalReflexSleep, &HookSlReflexSleep, function, L"slReflexSleep");
         return;
     }
     // latmon.2: the latency monitor wraps the marker setters on every route too ([Overlay] LatencyMonitor=0 keeps them
     // as they were); the hooks only forward while nothing shows the readout (xess_d3d12::LatencyMarker does nothing
     // while XeMFG standalone is off). The sleep stays XeMFG's.
-    if (!xemfg && !latency_probe::Available()) return;
+    if (!xemfg && !xmx::Latched() && !latency_probe::Available()) return;
     if (feature == sl::kFeaturePCL && strcmp(functionName, "slPCLSetMarker") == 0)
         WrapFeatureFunction(gOriginalPclSetMarker, &HookSlPclSetMarker, function, L"slPCLSetMarker");
     else if (feature == sl::kFeatureReflex && strcmp(functionName, "slReflexSetMarker") == 0)
         WrapFeatureFunction(gOriginalReflexSetMarker, &HookSlReflexSetMarker, function, L"slReflexSetMarker");
-    else if (xemfg && feature == sl::kFeatureReflex && strcmp(functionName, "slReflexSleep") == 0)
-        WrapFeatureFunction(gOriginalReflexSleep, &HookSlReflexSleep, function, L"slReflexSleep");
 }
 
 sl::Result HookSlGetFeatureFunction(
@@ -7481,6 +7569,7 @@ sl::Result HookSlSetTag(const sl::ViewportHandle& viewport,
     {
         RecordUiResourceTags(batch);
         LogFirstTags(tags, numTags, false, cmdBuffer != nullptr);
+        xmx::RecordTagStates(tags, numTags);
         // XeMFG standalone's inputs (the latest frame token's).
         xess_d3d12::StreamlineTags(static_cast<uint32_t>(viewport), false, 0, tags, numTags, cmdBuffer);
     }
@@ -7510,6 +7599,7 @@ sl::Result HookSlSetTagForFrame(const sl::FrameToken& frame,
     {
         RecordUiResourceTags(batch);
         LogFirstTags(tags, numTags, true, cmdBuffer != nullptr);
+        xmx::RecordTagStates(tags, numTags);
         // XeMFG standalone's inputs.
         xess_d3d12::StreamlineTags(static_cast<uint32_t>(viewport), true, id, tags, numTags, cmdBuffer);
     }
@@ -7566,6 +7656,7 @@ sl::Result HookSlSetD3DDevice(void* device)
     const bool verifiedDevice = gpu_backend::ObserveD3D12Device(device);
     if (verifiedDevice)
     {
+        xmx::low_latency::Observe(static_cast<IUnknown*>(device));
         gModuleInventoryDirty.store(true, std::memory_order_release);
         if (NativeDlssgPresetGpu())
         {
@@ -9080,7 +9171,6 @@ FARPROC WINAPI HookSlCommonGetProcAddress(
     if (record.ngxExport)
     {
         TryInstallNgxCreateEntryDetour(module, path, record.generation);
-        TryInstallNgxEvaluateEntryDetour(module, path, record.generation);
         ampere_backend::InstallVulkanRoute(module, path.c_str(), record.generation, false);
         TryInstallNgxVulkanCreateEntryDetours(
             module, path, record.generation);
@@ -10131,8 +10221,6 @@ ModuleRecord InspectLoadedModule(HMODULE module, const std::wstring& suppliedPat
     {
         TryInstallNgxCreateEntryDetour(
             snapshot.module, snapshot.path, snapshot.generation);
-        TryInstallNgxEvaluateEntryDetour(
-            snapshot.module, snapshot.path, snapshot.generation);
         // RTX 30 systems: the provider's Vulkan Release before its Create entries.
         ampere_backend::InstallVulkanRoute(
             snapshot.module, snapshot.path.c_str(), snapshot.generation, false);
@@ -10595,6 +10683,18 @@ void LogSessionState(const ControlConfig& control, bool heartbeat)
             static_cast<unsigned long long>(gAmpereAdmissionHeldRequests.load(std::memory_order_relaxed)));
         if (added > 0) counted += added;
     }
+    const auto xmxReport = ReadXmxStatus();
+    if (xmxReport.latched && used > 0 && counted > 0)
+    {
+        const int stateAdded = swprintf_s(state + used, _countof(state) - used,
+            L" xmx=on hooked=%d generating=%d evaluating=%d bypassed=%d", xmxReport.hooked, xmxReport.generating,
+            xmxReport.evaluating, xmxReport.bypassed);
+        const int countersAdded = swprintf_s(counters + counted, _countof(counters) - counted,
+            L" xmxEvaluates=%llu xmxGenerated=%llu", static_cast<unsigned long long>(xmxReport.evaluates),
+            static_cast<unsigned long long>(xmxReport.generated));
+        if (stateAdded > 0) used += stateAdded;
+        if (countersAdded > 0) counted += countersAdded;
+    }
     const auto xess = xess_mod::ReadSnapshot();
     if (xess && xess->providerLoaded && used > 0 && counted > 0)
     {
@@ -10612,6 +10712,20 @@ void LogSessionState(const ControlConfig& control, bool heartbeat)
             session_diagnostics::SuppressedRepeats());
 }
 #endif
+
+void LogMainThreadWaits(ULONGLONG& since)
+{
+    constexpr ULONGLONG kWindowMs = 10000;
+    const ULONGLONG now = GetTickCount64();
+    if (now - since < kWindowMs) return;
+    since = now;
+    const std::string line = main_thread_waits::DrainLine();
+    if (!line.empty()) Log(L"%hs", line.c_str());
+    const std::string xell = xmx::latency::DrainLine();
+    if (!xell.empty()) Log(L"XMX %hs", xell.c_str());
+    const std::string memory = xmx::MemoryLine();
+    if (!memory.empty()) Log(L"XMX %hs", memory.c_str());
+}
 
 #if MFG_UNLOCK_SESSION_DIAGNOSTICS
 #define MFG_SESSION_DIAGNOSTICS_LABEL L"+diag.1"
@@ -10717,6 +10831,8 @@ DWORD WINAPI PatchWorker(void* context)
     // Before the game's first Vulkan instance (its API version is raised only while the harness-only
     // standalone host is on; OptiScaler raises it for its XeFG output).
     ConfigureXemfg(initialControl);
+    xmx::Latch(initialControl.xmx, initialControl.xemfgStandalone);
+    ConfigureReflexSleep(initialControl);
     {
         const auto host = optiscaler_host::Read();
         if (host.detected)
@@ -10894,6 +11010,7 @@ DWORD WINAPI PatchWorker(void* context)
     constexpr uint32_t kStatusFileSeconds = 30;
     uint32_t statusFileSeconds = 0;
     uint32_t inventoryTicks = 0;
+    ULONGLONG waitsSince = GetTickCount64();
     bool previousReady = BridgeReady();
     std::string previousRoute = PatchRouteName();
     auto optiscalerNgxRoute = ampere_backend::OptiScalerNgxRoute::eWaiting;
@@ -10969,6 +11086,7 @@ DWORD WINAPI PatchWorker(void* context)
                 activeControl = control;
                 xess_mod::ConfigureModel(control.xessModel, OptiScalerHostModel());
                 ConfigureXemfg(control);
+                ConfigureReflexSleep(control);
                 if (mfgChanged)
                     StoreControl(activeControl);
                 else
@@ -11001,6 +11119,7 @@ DWORD WINAPI PatchWorker(void* context)
             activeControl = control;
             xess_mod::ConfigureModel(control.xessModel, OptiScalerHostModel());
             ConfigureXemfg(control);
+            ConfigureReflexSleep(control);
             if (mfgChanged)
                 StoreControl(activeControl);
             PublishLiveBridge(activeControl);
@@ -11068,6 +11187,7 @@ DWORD WINAPI PatchWorker(void* context)
             LogSessionState(activeControl, minute);
 #endif
         }
+        LogMainThreadWaits(waitsSince);
     }
 }
 }

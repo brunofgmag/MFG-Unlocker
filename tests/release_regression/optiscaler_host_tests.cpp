@@ -216,7 +216,7 @@ void CheckStreamlineInstances(const std::filesystem::path& here, const std::file
     Check(EntryUntouched(second, other, "slSetD3DDevice") != optiScalerPrivate, optiScalerPrivate
         ? "OptiScaler's private slSetD3DDevice entry is hooked"
         : "second instance slSetD3DDevice entry bytes untouched");
-    auto secondSet = reinterpret_cast<SetDeviceFn>(reinterpret_cast<const unsigned char*>(second)
+    auto secondSet = reinterpret_cast<SetDeviceFn>(reinterpret_cast<uintptr_t>(second)
         + ExportRva(reinterpret_cast<const unsigned char*>(second), "slSetD3DDevice"));
     auto gameCount = reinterpret_cast<CountFn>(GetProcAddress(game, "FixtureDeviceSets"));
     auto secondCount = reinterpret_cast<CountFn>(GetProcAddress(second, "FixtureDeviceSets"));
@@ -288,7 +288,7 @@ void CheckPrivateStartupOrder(const std::filesystem::path& here, const std::file
     auto atSet = reinterpret_cast<ReadFn>(GetProcAddress(interposer, "FixtureWrapperAtDeviceSet"));
     auto count = reinterpret_cast<CountFn>(GetProcAddress(interposer, "FixtureDeviceSets"));
     const auto* base = reinterpret_cast<const unsigned char*>(interposer);
-    auto set = reinterpret_cast<SetDeviceFn>(base + ExportRva(base, "slSetD3DDevice"));
+    auto set = reinterpret_cast<SetDeviceFn>(reinterpret_cast<uintptr_t>(base) + ExportRva(base, "slSetD3DDevice"));
     Check(probe && atSet && count, "interposer fixture probe exports");
     if (!probe || !atSet || !count) return;
     probe(wrapper);
@@ -686,7 +686,7 @@ int wmain(int argc, wchar_t** argv)
     }
 
     std::string saved = R"({"followGame":false,"mode":"fixed","multiplier":4,"dlssgPreset":1,)"
-        R"("vsyncMode":1,"reflexFrameLimitFps":90,"xessMultiplier":4,"xessForceEnable":true,)"
+        R"("vsyncMode":1,"reflexFrameLimitFps":90,"reflexSleepSkip":1,"xmxXell":1,"xmxStandIn":1,"xessMultiplier":4,"xessForceEnable":true,)"
         R"("xessLowLatencyMode":2,"xessFrameLimitFps":120,"generatedOnlyDebug":true,"dlssSrPreset":11,"dlss5":true)";
     saved += mode == L"optin" || mode == L"xefg-output-optin" ? R"(,"optiScalerUi":"rtxmfg"})"
         // menutab and menutab-plugin set "optiscaler": hidden is not the default outside a ForzaTech executable, and the
@@ -819,6 +819,9 @@ int wmain(int argc, wchar_t** argv)
     Check(Has(json, "mode", delegated ? "\"follow\"" : "\"fixed\""), "effective mode");
     Check(Has(json, "vsyncMode", delegated ? "0" : "1"), "V-Sync override");
     Check(Has(json, "reflexFrameLimitFps", delegated ? "0" : "90"), "Reflex frame limit override");
+    Check(Has(json, "reflexSleepSkip", delegated ? "false" : "true"), "Reflex sleep skip override");
+    Check(Has(json, "xmxXell", delegated ? "false" : "true"), "XMX XeLL override");
+    Check(Has(json, "xmxStandIn", delegated ? "false" : "true"), "XMX stand-in override");
     // XeSS MFG runs under OptiScaler only; the saved file's older XeSS keys still load and are ignored.
     Check(json.find("\"xessMultiplier\"") == std::string::npos && json.find("\"xessForceEnable\"") == std::string::npos
         && json.find("\"xessFrameLimitFps\"") == std::string::npos && json.find("\"xessLowLatencyMode\"") == std::string::npos,

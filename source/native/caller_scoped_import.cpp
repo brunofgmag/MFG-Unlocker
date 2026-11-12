@@ -112,10 +112,7 @@ bool PublicTarget(void* target, const char* name, HMODULE& owner) noexcept {
     const wchar_t* leaf=OwnerName(name);
     if (!leaf) return false;
     owner=GetModuleHandleW(leaf);
-    wchar_t actual[MAX_PATH]{},system[MAX_PATH]{};
-    if (!owner || !GetModuleFileNameW(owner,actual,MAX_PATH) || !GetSystemDirectoryW(system,MAX_PATH)
-        || wcscat_s(system,L"\\") || wcscat_s(system,leaf) || _wcsicmp(actual,system)
-        || reinterpret_cast<void*>(GetProcAddress(owner,name))!=target) return false;
+    if (!owner || reinterpret_cast<void*>(GetProcAddress(owner,name))!=target) return false;
     MEMORY_BASIC_INFORMATION memory{};
     return VirtualQuery(target,&memory,sizeof(memory))==sizeof(memory)
         && memory.AllocationBase==owner && memory.Type==MEM_IMAGE && memory.State==MEM_COMMIT

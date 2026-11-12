@@ -2,6 +2,7 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 #include <cstdio>
+#include "beside_executable.h"
 #include "unaligned_import_fixture.h"
 using Microsoft::WRL::ComPtr;
 static bool okay=true;
@@ -9,7 +10,11 @@ static void Check(bool value,const char* name){printf("%s %s\n",value?"PASS":"FA
 static HRESULT MainFactory(unsigned api,REFIID iid,void** output){
     return api==0?CreateDXGIFactory(iid,output):api==1?CreateDXGIFactory1(iid,output):CreateDXGIFactory2(0,iid,output);
 }
-int main(){
+int main(int argc,char** argv){
+    const bool local=argc>1&&!strcmp(argv[1],"local-dxgi");
+    if(local){
+        Check(BesideExecutable(L"dxgi.dll"),"the process runs on a dxgi.dll beside the executable");if(!okay)return 1;
+    }
     // Keep USER32 imported so this is the complete MSFS-shaped import fixture.
     const SHORT volatile ignored=GetKeyState(0);(void)ignored;
     HMODULE main=GetModuleHandleW(nullptr),fixture=LoadLibraryW(L"ScopedCallerFixture.dll");
@@ -63,6 +68,8 @@ int main(){
         const auto before=count(i);ComPtr<IDXGIFactory> object;
         Check(SUCCEEDED(MainFactory(i,IID_PPV_ARGS(&object)))&&object&&count(i)==before+1,"reactivated factory forwards once without recursion");
     }
-    Check(unaligned_fixture::Unchanged(),"import bytes and RWX protection preserved after rollback and reactivation");
+    Check(unaligned_fixture::BytesUnchanged(),"import bytes preserved after rollback and reactivation");
+    if(local)return okay?0:1;
+    Check(unaligned_fixture::ProtectionPreserved(),"RWX import protection preserved after rollback and reactivation");
     return okay?0:1;
 }

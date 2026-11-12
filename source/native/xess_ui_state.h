@@ -51,7 +51,36 @@ struct State
     unsigned long long latencyPacingBackoffs = 0, latencyPacingIneffective = 0;
     double latencyPacingHeldMs = 0, latencyPacingSlackMs = 0, latencyPacingSleptMs = 0;
     long long latencyPacingAgeMs = -1;
+    BOOL xmxSaved = FALSE, xmxLatched = FALSE, xmxHooked = FALSE, xmxPartiallyHooked = FALSE, xmxGenerating = FALSE;
+    BOOL xmxEvaluating = FALSE, xmxBypassed = FALSE, xmxXell = FALSE, xmxXellReady = FALSE;
+    uint32_t xmxFramesLimit = 0;
+    std::string xmxRefusal, xmxIdle, xmxFailure;
 };
+
+inline bool XmxFailed(const State& state) noexcept
+{
+    return state.xmxLatched && !state.xmxGenerating && !state.xmxFailure.empty();
+}
+
+inline bool XmxRefused(const State& state) noexcept
+{
+    return state.xemfgStandalone || !state.xmxRefusal.empty();
+}
+
+inline bool XmxModelLocked(const State& state) noexcept
+{
+    return XmxRefused(state) && !state.xmxSaved;
+}
+
+inline bool XmxXellShown(const State& state) noexcept
+{
+    return state.xmxLatched && !state.optiScaler;
+}
+
+inline bool XmxXellWaiting(const State& state) noexcept
+{
+    return XmxXellShown(state) && state.xmxXell && !state.xmxXellReady;
+}
 
 // latency.1: the backend's latencyPacingDetail string (patcher.cpp LatencyPacingStatus).
 inline bool ParseLatencyPacing(const std::string& detail, State& state) noexcept
@@ -126,6 +155,19 @@ State Read(const std::string& text, BoolReader boolean, IntegerReader integer, S
     std::string latency;
     string(text, "latencyPacingDetail", latency);
     if (!latency.empty()) ParseLatencyPacing(latency, next);
+    boolean(text, "xmxSaved", next.xmxSaved);
+    boolean(text, "xmxLatched", next.xmxLatched);
+    boolean(text, "xmxHooked", next.xmxHooked);
+    boolean(text, "xmxPartiallyHooked", next.xmxPartiallyHooked);
+    boolean(text, "xmxGenerating", next.xmxGenerating);
+    boolean(text, "xmxEvaluating", next.xmxEvaluating);
+    boolean(text, "xmxBypassed", next.xmxBypassed);
+    boolean(text, "xmxXell", next.xmxXell);
+    boolean(text, "xmxXellReady", next.xmxXellReady);
+    integer(text, "xmxFramesLimit", next.xmxFramesLimit);
+    string(text, "xmxRefusal", next.xmxRefusal);
+    string(text, "xmxIdle", next.xmxIdle);
+    string(text, "xmxFailure", next.xmxFailure);
     if (!boolean(text, "xessAvailable", next.available) || !next.available) return next;
     boolean(text, "xessHooksActive", next.hooksActive);
     boolean(text, "xessInitialized", next.initialized);

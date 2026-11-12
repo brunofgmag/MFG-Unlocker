@@ -12,6 +12,7 @@
 #include "vsync_control.h"
 #include "latency_probe.h"
 #include "latency_probe_ring.h"
+#include "main_thread_waits.h"
 #include <d3d12.h>
 #include <intrin.h>
 #include <mutex>
@@ -351,6 +352,10 @@ struct PresentCall {
 };
 thread_local PresentCall* PresentCall::current=nullptr;
 
+void NoteApplicationPresent(const PresentCall& call,UINT flags,int64_t start) noexcept {
+    if (call.outer && !(flags & DXGI_PRESENT_TEST)) main_thread_waits::NotePresent(start,main_thread_waits::Now());
+}
+
 class SwapchainProxy final : public IDXGISwapChain4 {
 public:
     ComPtr<IDXGISwapChain> original;
@@ -548,8 +553,10 @@ public:
         const bool host=xemfgHost&&call.outer&&!(flags & DXGI_PRESENT_TEST);
         if (host) xess_d3d12::BeforePresent(original.Get());
 #endif
+        const int64_t waitStart=main_thread_waits::Now();
         const HRESULT hr=original->Present(vsync.interval,flags);
         const int64_t probeReturn=probe?latency_probe::Now():0;
+        NoteApplicationPresent(call,flags,waitStart);
 #if MFG_UNLOCK_XESS
         if (host) xess_d3d12::AfterPresent(original.Get(),hr);
         GameFramePresented(chainBefore);
@@ -581,8 +588,10 @@ public:
         const bool host=xemfgHost&&call.outer&&!(flags & DXGI_PRESENT_TEST);
         if (host) xess_d3d12::BeforePresent(original.Get());
 #endif
+        const int64_t waitStart=main_thread_waits::Now();
         const HRESULT hr=interfaces.As<IDXGISwapChain1>(1)->Present1(vsync.interval,flags,params);
         const int64_t probeReturn=probe?latency_probe::Now():0;
+        NoteApplicationPresent(call,flags,waitStart);
 #if MFG_UNLOCK_XESS
         if (host) xess_d3d12::AfterPresent(original.Get(),hr);
         GameFramePresented(chainBefore);

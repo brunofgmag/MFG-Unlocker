@@ -184,6 +184,7 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
                 configure_file("${MFG_PREGENERATED_INPUTS}/${generated}.rc.in" "${MFG_GENERATED}/${generated}.rc" @ONLY)
             endforeach()
             configure_file("${MFG_PREGENERATED_INPUTS}/vk_input_copy_spv.h" "${MFG_GENERATED}/vk_input_copy_spv.h" COPYONLY)
+            configure_file("${MFG_PREGENERATED_INPUTS}/rtxhair_vk_shaders.h" "${MFG_GENERATED}/rtxhair_vk_shaders.h" COPYONLY)
         else()
             # splat.1: RTXMFG's own XeFG shaders, compiled by the generator's pinned Windows SDK dxc
             # (the SDK selected by -A x64,version=...); the generator pins the dxc version and outputs.
@@ -221,7 +222,8 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
             xess/xess_mod.cpp xess/universal_hooks.cpp xess/internal_api_guards.asm
             xess/sdk_pacing.cpp xess/game_profile.cpp xess/runtime_payload.cpp xess/xess_runtime.cpp
             xess/host_unlock.cpp xess/intel_native.cpp xess/motion_fill.cpp xess/hudless_match.cpp xess/cuda/cuda_route.cpp xess/cuda/provider_list.cpp
-            xess/d3d12_host.cpp xess/host_xell_binding.cpp)
+            xess/d3d12_host.cpp xess/host_xell_binding.cpp
+            xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_context.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_programs.rc" xess_programs 1 3901 "${MFG_GENERATED}" packed_programs)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_shaders.rc" xess_shaders 2 3902 "${MFG_GENERATED}" packed_shaders)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xefg_cuda.rc" xefg_cuda 3 3903 "${MFG_GENERATED}" packed_cuda)
@@ -390,7 +392,7 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
     set_target_properties(RTXMFGUnified PROPERTIES PREFIX "" OUTPUT_NAME "MFGUnlocker"
         LINKER_LANGUAGE CXX MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     if(MFG_PREGENERATED_INPUTS)
-        target_link_options(RTXMFGUnified PRIVATE /EXPORT:MfgXeFGVkGetApi,@428 /MERGE:.edata=.edata)
+        target_link_options(RTXMFGUnified PRIVATE /EXPORT:MfgXeFGVkGetApi,@428 /EXPORT:MfgXeMFGProviderGetApi,@429 /MERGE:.edata=.edata)
         add_custom_command(TARGET RTXMFGUnified POST_BUILD
             COMMAND "${Python3_EXECUTABLE}" "${MFG_LINUX_TOOLS}/finalize_dll.py" "$<TARGET_FILE:RTXMFGUnified>" RTXMFG.dll
             VERBATIM)

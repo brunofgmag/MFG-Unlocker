@@ -40,6 +40,7 @@
 #include <cmath>
 #include "ui_status_json.h"
 #include "xess_ui_state.h"
+#include "control_json.h"
 #include "xess/runtime_search.h"
 #include <atomic>
 #include <cctype>
@@ -147,15 +148,7 @@ bool BackendUsesNativeFile() noexcept
 bool FindJsonValue(const std::string& content, const char* name,
     size_t& offset) noexcept
 {
-    const std::string key = std::string("\"") + name + "\"";
-    const size_t keyOffset = content.find(key);
-    if (keyOffset == std::string::npos)
-        return false;
-    const size_t colon = content.find(':', keyOffset + key.size());
-    if (colon == std::string::npos)
-        return false;
-    offset = content.find_first_not_of(" \t\r\n", colon + 1);
-    return offset != std::string::npos;
+    return control_json::FindValue(content, name, offset);
 }
 
 bool ParseJsonBool(const std::string& content, const char* name,
@@ -898,33 +891,15 @@ std::string NativeControlJson(uint32_t multiplier, BOOL followGame, BOOL dynamic
     return std::string(content, static_cast<size_t>(length));
 }
 
-// Carries a raw JSON value of name from the saved control into content when the
-// new content lacks it. Writers that rebuild the whole object (DLSS mode,
-// preset) then keep the saved XeSS model and UI owner.
-void CarryControlField(std::string& content, const std::string& saved, const char* name)
-{
-    size_t offset = 0, existing = 0;
-    if (FindJsonValue(content, name, offset) || !FindJsonValue(saved, name, existing)) return;
-    size_t end = existing;
-    while (end < saved.size() && saved[end] != ',' && saved[end] != '}'
-        && saved[end] != '\r' && saved[end] != '\n') ++end;
-    const size_t close = content.find_last_not_of(" \t\r\n");
-    if (end == existing || close == std::string::npos || content[close] != '}') return;
-    content.insert(close, std::string(",\"") + name + "\":" + saved.substr(existing, end-existing));
-}
-
 BOOL WriteNativeControl(const std::string& input)
 {
     std::string content = input;
     std::string saved;
     if (ReadTextFile(gNativeConfigPath, saved))
     {
-        for (const char* name : {"xessModel", "optiScalerUi", "dlssSrPreset", "dlssRrPreset", "xessVulkan", "xessVulkanFrames",
-                 "xemfgStandalone", "xemfgFrames", "xemfgDynamic", "xemfgTargetFps", "xemfgRounding", "xemfgAllow1x",
-                 "xemfgTargetAsCap", "xemfgFlipQueue", "latencyPacing", "dlssgDefaults"})
-            CarryControlField(content, saved, name);
+        control_json::Carry(content, saved);
         for (const auto& field : dlss5::settings_json::kFields)
-            CarryControlField(content, saved, field.key);
+            control_json::CarryField(content, saved, field.key);
     }
     if (content.empty() || content.size() > 4096) return FALSE;
     std::error_code error;
@@ -1087,31 +1062,45 @@ BOOL NativeFilePersistPresentation(uint32_t vsyncMode, uint32_t reflexFrameLimit
     return WriteNativeControl(content);
 }
 
+bool ReadControlForUpdate(std::string& content)
+{
+    if (ReadTextFile(gNativeConfigPath, content))
+    {
+        MfgUnlockReShadeSnapshot saved{};
+        return ParseNativeControlSnapshot(content, &saved) != FALSE;
+    }
+    const DWORD attributes = GetFileAttributesW(gNativeConfigPath.c_str());
+    const DWORD error = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
+    if (attributes != INVALID_FILE_ATTRIBUTES
+        || (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)) return false;
+    MfgUnlockReShadeSnapshot current{};
+    if (!NativeFileGetSnapshot(&current)) return false;
+    content = NativeControlJson(current.desiredMultiplier, current.followGameMode,
+        current.dynamicMode, current.dynamicTargetFrameRate, current.generatedOnlyDebug,
+        current.intervalLoggingEnabled, current.dlssgPresetRequested,
+        current.vsyncMode, current.reflexFrameLimitFps);
+    return true;
+}
+
+// latency.1: low-latency pacing (0 auto, 1 on, 2 off). The backend applies it live (patcher.cpp ConfigureXemfg).
+BOOL NativeFilePersistLatencyPacing(uint32_t mode)
+{
+    if (mode > 2) return FALSE;
+    std::string content;
+    if (!ReadControlForUpdate(content)
+        || !SetUnsignedControlField(content, "latencyPacing", mode)
+        || !SetUnsignedControlField(content, "version", 13)) return FALSE;
+    return WriteNativeControl(content);
+}
+
 // XeMFG standalone's switch, frame count and Dynamic MFG settings, all live: the host moves the game's swap chain to
 // XeFG or back (xess/d3d12_host.h Move).
 BOOL NativeFilePersistXemfg(bool on, uint32_t frames, const xess_ui::State& x)
 {
     frames = std::clamp<uint32_t>(frames, 2, 6);
     std::string content;
-    if (ReadTextFile(gNativeConfigPath, content))
-    {
-        MfgUnlockReShadeSnapshot saved{};
-        if (!ParseNativeControlSnapshot(content, &saved)) return FALSE;
-    }
-    else
-    {
-        const DWORD attributes = GetFileAttributesW(gNativeConfigPath.c_str());
-        const DWORD error = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
-        if (attributes != INVALID_FILE_ATTRIBUTES
-            || (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)) return FALSE;
-        MfgUnlockReShadeSnapshot current{};
-        if (!NativeFileGetSnapshot(&current)) return FALSE;
-        content = NativeControlJson(current.desiredMultiplier, current.followGameMode,
-            current.dynamicMode, current.dynamicTargetFrameRate, current.generatedOnlyDebug,
-            current.intervalLoggingEnabled, current.dlssgPresetRequested,
-            current.vsyncMode, current.reflexFrameLimitFps);
-    }
-    if (!SetUnsignedControlField(content, "xemfgStandalone", on ? 1u : 0u)
+    if (!ReadControlForUpdate(content)
+        || !SetUnsignedControlField(content, "xemfgStandalone", on ? 1u : 0u)
         || !SetUnsignedControlField(content, "xemfgFrames", frames)
         || !SetUnsignedControlField(content, "xemfgDynamic", x.xemfgDynamic ? 1u : 0u)
         || !SetUnsignedControlField(content, "xemfgTargetFps", std::min<uint32_t>(x.xemfgTargetFps, 1000))
@@ -1122,32 +1111,23 @@ BOOL NativeFilePersistXemfg(bool on, uint32_t frames, const xess_ui::State& x)
     return WriteNativeControl(content);
 }
 
-// latency.1: low-latency pacing (0 auto, 1 on, 2 off). The backend applies it live (patcher.cpp ConfigureXemfg).
-BOOL NativeFilePersistLatencyPacing(uint32_t mode)
+BOOL NativeFilePersistFlag(const char* key, bool on)
 {
-    if (mode > 2) return FALSE;
     std::string content;
-    if (ReadTextFile(gNativeConfigPath, content))
-    {
-        MfgUnlockReShadeSnapshot saved{};
-        if (!ParseNativeControlSnapshot(content, &saved)) return FALSE;
-    }
-    else
-    {
-        const DWORD attributes = GetFileAttributesW(gNativeConfigPath.c_str());
-        const DWORD error = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
-        if (attributes != INVALID_FILE_ATTRIBUTES
-            || (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)) return FALSE;
-        MfgUnlockReShadeSnapshot current{};
-        if (!NativeFileGetSnapshot(&current)) return FALSE;
-        content = NativeControlJson(current.desiredMultiplier, current.followGameMode,
-            current.dynamicMode, current.dynamicTargetFrameRate, current.generatedOnlyDebug,
-            current.intervalLoggingEnabled, current.dlssgPresetRequested,
-            current.vsyncMode, current.reflexFrameLimitFps);
-    }
-    if (!SetUnsignedControlField(content, "latencyPacing", mode)
+    if (!ReadControlForUpdate(content)
+        || !SetUnsignedControlField(content, key, on ? 1u : 0u)
         || !SetUnsignedControlField(content, "version", 13)) return FALSE;
     return WriteNativeControl(content);
+}
+
+BOOL NativeFilePersistXmx(bool on)
+{
+    return NativeFilePersistFlag("xmx", on);
+}
+
+BOOL NativeFilePersistXmxXell(bool on)
+{
+    return NativeFilePersistFlag("xmxXell", on);
 }
 
 void WINAPI NativeFileSetFrontendAttached(BOOL)
@@ -1362,8 +1342,11 @@ void HelpMarker(const char* text)
 {
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", text);
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || !ImGui::BeginTooltip()) return;
+    ImGui::PushTextWrapPos(ImGui::CalcTextSize("0").x * 92.0f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
 }
 
 void Section(const char* title)
@@ -1760,9 +1743,13 @@ void PresetControlRow(MfgUnlockReShadeSnapshot& snapshot, bool statusStale)
     bool changed = false;
     const auto& options = kDlssgPresetOptions;
     const bool legacyPreset = UiAmpere() && snapshot.ampereLegacySinglePreset;
+    const bool xmxPreset = gXessUi.xmxLatched != FALSE;
     ControlRow(T("DLSS-G preset"));
-    ImGui::BeginDisabled(legacyPreset);
-    if (ImGui::BeginCombo("##dlssgpreset", legacyPreset ? T("Original preset") : PresetOption(options[std::clamp(gDlssgPreset, 0, 3)])))
+    ImGui::BeginDisabled(legacyPreset || xmxPreset);
+    const char* shownPreset = PresetOption(options[std::clamp(gDlssgPreset, 0, 3)]);
+    if (legacyPreset) shownPreset = T("Original preset");
+    if (xmxPreset) shownPreset = "Not used with XMX";
+    if (ImGui::BeginCombo("##dlssgpreset", shownPreset))
     {
         for (int preset = 0; preset <= maximumPreset; ++preset)
         {
@@ -3752,9 +3739,49 @@ bool XemfgAvailable() noexcept
 // The last custom Dynamic target, kept while "Display refresh rate" is ticked.
 int gXemfgCustomTargetFps = 120;
 
+bool gXmxSaveFailed = false;
+
+void XmxControlRow()
+{
+    auto& x = gXessUi;
+    int selected = x.xmxSaved ? 1 : 0;
+    const char* options[] = {"NVIDIA", "XMX (Intel XeFG)"};
+    ControlRow("Generation model");
+    ImGui::BeginDisabled(xess_ui::XmxModelLocked(x));
+    const bool changed = ImGui::Combo("##xmxmodel", &selected, options, IM_ARRAYSIZE(options));
+    ImGui::EndDisabled();
+    HelpMarker("Which model generates the frames. NVIDIA is DLSS frame generation's own model. XMX runs Intel's "
+        "XeFG model inside DLSS frame generation, which still presents the frames and keeps Reflex. XMX needs "
+        "libxess_fg.dll and libxell.dll in an RTXMFG-XeSS folder beside MFG Unlocker, and it stays off while XeMFG "
+        "standalone is on and on RTX 30 and RTX 20 GPUs.\n"
+        "Changing it applies after a restart.");
+    if (!changed || (selected == 1 && xess_ui::XmxRefused(x))) return;
+    gXmxSaveFailed = !NativeFilePersistXmx(selected == 1);
+    if (!gXmxSaveFailed) x.xmxSaved = selected == 1 ? TRUE : FALSE;
+}
+
+bool gXmxXellSaveFailed = false;
+
+void XmxXellControlRow()
+{
+    auto& x = gXessUi;
+    if (!xess_ui::XmxXellShown(x)) return;
+    bool on = x.xmxXell != FALSE;
+    ControlRow("XeLL sleep");
+    const bool changed = ImGui::Checkbox("##xmxxell", &on);
+    HelpMarker("While XMX generates frames, the game's Reflex sleep goes to Intel XeLL instead of NVIDIA's driver. "
+        "vkd3d-proton keeps its own limit on how many frames the GPU can queue.\n"
+        "Changes apply right away.");
+    if (!changed) return;
+    gXmxXellSaveFailed = !NativeFilePersistXmxXell(on);
+    if (!gXmxXellSaveFailed) x.xmxXell = on ? TRUE : FALSE;
+}
+
 void XemfgControlRows()
 {
     auto& x = gXessUi;
+    XmxControlRow();
+    XmxXellControlRow();
     auto wanted = x;
     bool on = x.xemfgStandalone != FALSE;
     int index = static_cast<int>(std::clamp<uint32_t>(x.xemfgSavedFrames ? x.xemfgSavedFrames : 2, 2, 6)) - 2;
@@ -3906,9 +3933,42 @@ void XemfgRestartNotes()
 }
 
 // Notes for the rows above: what XeMFG waits for. Reasons come from the host (xess/d3d12_host.cpp, vk_host.cpp).
+void XmxNotes()
+{
+    const auto& x = gXessUi;
+    if (gXmxSaveFailed) Note(Tone::Bad, "The generation model could not be saved.");
+    if (gXmxXellSaveFailed) Note(Tone::Bad, "The XeLL sleep setting could not be saved.");
+    if (xess_ui::XmxXellWaiting(x)) Note(Tone::Pending, "XeLL starts when XMX first runs.");
+    if (x.xmxRefusal == "translated_gpu")
+        Note(Tone::Bad, "XMX is off: RTX 30 and RTX 20 GPUs run frame generation through MFG Unlocker's own program, "
+            "which XMX cannot replace.");
+    else if (!x.xmxRefusal.empty()) Note(Tone::Bad, "XMX is off because XeMFG standalone is on.");
+    else if (x.xmxSaved != x.xmxLatched) Note(Tone::Pending, "Restart the game to switch the generation model.");
+    if (!x.xmxLatched) return;
+    if (xess_ui::XmxFailed(x)) Note(Tone::Bad, "XMX stopped generating: %s", x.xmxFailure.c_str());
+    else if (x.xmxBypassed)
+        Note(Tone::Pending, "NVIDIA's model is generating. This game runs a DLSS frame generation copy that XMX "
+            "does not cover.");
+    if (x.xmxFramesLimit)
+        Note(Tone::Dim, "This XMX model makes %u generated frames per real frame. Higher multipliers repeat the "
+            "last one.", x.xmxFramesLimit);
+}
+
+void XmxStatusRows()
+{
+    const auto& x = gXessUi;
+    if (!x.xmxLatched) return;
+    if (xess_ui::XmxFailed(x)) StatusDetail("XMX", Tone::Bad, "Stopped", x.xmxFailure.c_str());
+    else if (x.xmxBypassed) StatusDetail("XMX", Tone::Pending, "Not used", "NVIDIA is generating");
+    else if (x.xmxGenerating) StatusRow("XMX", Tone::Good, "%s", "Generating");
+    else if (x.xmxEvaluating) StatusDetail("XMX", Tone::Pending, "Waiting", x.xmxIdle.c_str());
+    else StatusDetail("XMX", Tone::Pending, "Waiting", "DLSS frame generation is not calling the generator");
+}
+
 void XemfgNotes()
 {
     const auto& x = gXessUi;
+    if (XemfgAvailable()) XmxNotes();
     if (gXemfgSaveFailed) Note(Tone::Bad, T("The XeMFG setting could not be saved."));
     if (!x.xemfgStandalone)
     {
@@ -6043,6 +6103,7 @@ void DrawSettings(reshade::api::effect_runtime* runtime)
             else
                 StatusDetail(T("FG state"), !fgKnown ? Tone::Dim : snapshot.appliedFrameGenerationOn ? Tone::Good : Tone::Normal,
                     !fgKnown ? T("Unknown") : snapshot.appliedFrameGenerationOn ? T("On") : T("Off"), detail);
+            XmxStatusRows();
             if (snapshot.followGameMode)
                 StatusRow(T("Requested"), Tone::Normal, "%s", T("Follow game"));
             else if (snapshot.appliedRevision == 0 || snapshot.dynamicMode != snapshot.appliedDynamicMode

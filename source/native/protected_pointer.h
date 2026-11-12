@@ -85,8 +85,10 @@ inline bool SetAndVerifyProtection(void* address, size_t size,
 {
     DWORD ignored = 0;
     protectMemory(address, size, protection, &ignored);
-    return ProtectionMatches(
-        reinterpret_cast<uintptr_t>(address), protection, size);
+    const uintptr_t location = reinterpret_cast<uintptr_t>(address);
+    return ProtectionMatches(location, protection, size)
+        || (protection == PAGE_READWRITE
+            && ProtectionMatches(location, PAGE_WRITECOPY, size));
 }
 
 inline bool RestoreProtectionWithRetry(void* address, size_t size,

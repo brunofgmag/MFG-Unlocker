@@ -137,6 +137,7 @@ void SetStandaloneHostDevice(ID3D12Device* device) noexcept;
 // host initialization, so a restart applies a change; an OptiScaler.ini that sets XeFGFlipQueue still decides.
 void SetStandaloneFlipQueue(uint32_t mode) noexcept;
 void WriteLog(const char* stage, const std::string& fields) noexcept;
+bool PublishMultiFrameModel(HMODULE fg, HMODULE ll, std::string& error) noexcept;
 HMODULE Self() noexcept;
 bool Active() noexcept;
 // The game's own discovered SDK pair, once the hooks are active.

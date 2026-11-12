@@ -92,7 +92,26 @@ add_executable(EntryOverlayTests entry_overlay_tests.cpp "${NATIVE_SOURCE}/entry
 add_library(EntryOverlayFixture SHARED entry_overlay_fixture.cpp entry_overlay_fixture.asm entry_overlay_fixture.def)
 set_target_properties(EntryOverlayFixture PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_dependencies(EntryOverlayTests EntryOverlayFixture)
-foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipMeteringTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests AmpereArchitectureTests AmpereWrapperTests DlssgSelectionTests NvapiResolveTests DriverPathTests LoaderLockTests FirstSampleTableTests AdaGateHoldTests GpuNameOverrideTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests DlssgPresetHookInstallTests DlssSrOverrideAudit EntryOverlayTests)
+if(EXISTS "${STREAMLINE_ROOT}/include/sl.h" AND EXISTS "${STREAMLINE_ROOT}/external/ngx-sdk/include/nvsdk_ngx.h"
+        AND EXISTS "${VULKAN_INCLUDE_DIR}/vulkan/vulkan.h")
+    add_executable(XmxProviderGateTests xmx_gate_tests.cpp xmx_gate_stubs.cpp "${NATIVE_SOURCE}/ampere_backend.cpp"
+        "${NATIVE_SOURCE}/ampere_wrapper_capacity.cpp" "${NATIVE_SOURCE}/entry_detour.cpp" "${CMAKE_CURRENT_BINARY_DIR}/preset_entry_detour.asm" ${MINHOOK_SOURCES})
+    target_include_directories(XmxProviderGateTests PRIVATE "${STREAMLINE_ROOT}/include"
+        "${STREAMLINE_ROOT}/external/ngx-sdk/include" "${VULKAN_INCLUDE_DIR}")
+    target_compile_definitions(XmxProviderGateTests PRIVATE MFG_UNLOCK_XESS=1 MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY=1
+        VK_NO_PROTOTYPES=1)
+    target_link_libraries(XmxProviderGateTests PRIVATE version psapi)
+    add_library(XmxGateFixture SHARED xmx_gate_fixture.cpp xmx_gate_fixture.asm xmx_gate_fixture.def)
+    set_target_properties(XmxGateFixture PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    add_library(XmxGateRuntimeFixture SHARED xmx_gate_fixture.cpp xmx_gate_fixture.asm xmx_gate_runtime_fixture.def)
+    set_target_properties(XmxGateRuntimeFixture PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    add_dependencies(XmxProviderGateTests XmxGateFixture XmxGateRuntimeFixture)
+    set(MFG_XMX_GATE_TESTS XmxProviderGateTests)
+else()
+    message(STATUS "XmxProviderGateTests skipped: set STREAMLINE_ROOT and VULKAN_INCLUDE_DIR")
+    set(MFG_XMX_GATE_TESTS)
+endif()
+foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipMeteringTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests AmpereArchitectureTests AmpereWrapperTests DlssgSelectionTests NvapiResolveTests DriverPathTests LoaderLockTests FirstSampleTableTests AdaGateHoldTests GpuNameOverrideTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests DlssgPresetHookInstallTests DlssSrOverrideAudit EntryOverlayTests ${MFG_XMX_GATE_TESTS})
     target_compile_features(${target} PRIVATE cxx_std_20)
     target_include_directories(${target} PRIVATE "${NATIVE_SOURCE}" "${MINHOOK}/include")
     target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -110,7 +129,7 @@ target_compile_definitions(SelectionSibling PRIVATE FIXTURE_MINOR=9 FIXTURE_BUIL
 # No inputs: run with every build. The flip-metering, wrapper, selection and architecture tests take real
 # Streamline wrappers and DLSS-G providers as arguments (see BUILD.md).
 enable_testing()
-foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests EntryOverlayTests DriverPathTests LoaderLockTests FirstSampleTableTests AdaGateHoldTests)
+foreach(target AmpereBatchTests AmpereStartupRequirementsTests AmpereOptionsTests AmpereFlipObserverTests AmpereStatusFieldsTests StreamlineOtaTests OptiScalerPrivateStartupTests DlssgPresetSwitchTests ${MFG_DLSS_SR_TESTS} AmpereVulkanRouteTests EntryOverlayTests DriverPathTests LoaderLockTests FirstSampleTableTests AdaGateHoldTests ${MFG_XMX_GATE_TESTS})
     add_test(NAME ${target} COMMAND ${target})
 endforeach()
 # Exit code 2 is a setup failure (no NVIDIA driver or no split nvapi64_impl.dll), never a pass.

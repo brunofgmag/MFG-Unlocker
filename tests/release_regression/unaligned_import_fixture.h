@@ -1,6 +1,7 @@
 #pragma once
 #include <Windows.h>
 #include <array>
+#include <cstdio>
 #include <cstring>
 
 // Test-only relocation of import descriptors to unaligned copies in this
@@ -61,19 +62,31 @@ inline bool Prepare(bool graphics=false,bool alignedInput=false) {
     }
     return found==(inputOnly?1:tables);
 }
-inline bool Unchanged(){
+inline bool UnderWine(){
+    const HMODULE ntdll=GetModuleHandleW(L"ntdll.dll");
+    return ntdll&&GetProcAddress(ntdll,"wine_get_version");
+}
+inline bool ProtectionKept(const void* address,DWORD expected){
+    MEMORY_BASIC_INFORMATION memory{};
+    if(!VirtualQuery(address,&memory,sizeof(memory)))return false;
+    if(memory.Protect==expected)return true;
+    const bool wineReadback=expected==PAGE_EXECUTE_READWRITE&&memory.Protect==PAGE_EXECUTE_WRITECOPY&&UnderWine();
+    printf("protection 0x%lx, expected 0x%lx%s\n",memory.Protect,expected,wineReadback?" (Wine reads PAGE_EXECUTE_WRITECOPY back)":"");
+    return wineReadback;
+}
+inline bool BytesUnchanged(){
     for(size_t i=0;i<tables;++i){
         if(inputOnly&&i!=1)continue;
         if(!sizes[i]||memcmp(storage[i].data()+offset,baseline[i].data(),sizes[i]))return false;
     }
-    if(inputProtection){
-        MEMORY_BASIC_INFORMATION memory{};
-        if(!VirtualQuery(storage[1].data()+offset,&memory,sizeof(memory))||memory.Protect!=inputProtection)return false;
-    }
-    if(graphicsProtection){
-        MEMORY_BASIC_INFORMATION memory{};
-        if(!VirtualQuery(storage[2].data()+offset,&memory,sizeof(memory))||memory.Protect!=graphicsProtection)return false;
-    }
     return true;
+}
+inline bool ProtectionPreserved(){
+    if(inputProtection&&!ProtectionKept(storage[1].data()+offset,inputProtection))return false;
+    if(graphicsProtection&&!ProtectionKept(storage[2].data()+offset,graphicsProtection))return false;
+    return true;
+}
+inline bool Unchanged(){
+    return BytesUnchanged()&&ProtectionPreserved();
 }
 }

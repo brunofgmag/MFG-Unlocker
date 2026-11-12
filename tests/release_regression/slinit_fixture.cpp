@@ -78,8 +78,12 @@ static sl::Result FixturePclSetMarker(uint32_t, const sl::FrameToken* frame){
 }
 extern "C" __declspec(dllexport) unsigned WINAPI FixturePclCalls(){return pclCalls.load();}
 extern "C" __declspec(dllexport) void* WINAPI FixturePclAddress(){return reinterpret_cast<void*>(&FixturePclSetMarker);}
+static std::atomic<unsigned> reflexSleeps{0};
+extern "C" __declspec(dllexport) sl::Result WINAPI FixtureReflexSleep(const sl::FrameToken&){++reflexSleeps;return sl::Result::eOk;}
+extern "C" __declspec(dllexport) unsigned WINAPI FixtureReflexSleeps(){return reflexSleeps.load();}
 extern "C" __declspec(dllexport) sl::Result slGetFeatureFunction(sl::Feature, const char* name, void*& function){
     if(name&&!strcmp(name,"slPCLSetMarker")){function=reinterpret_cast<void*>(&FixturePclSetMarker);return sl::Result::eOk;}
+    if(name && strcmp(name,"slReflexSleep")==0){function=reinterpret_cast<void*>(&FixtureReflexSleep);return sl::Result::eOk;}
     HMODULE wrapper=GetModuleHandleW(L"ControlWrapperFixture.dll");
     if(!wrapper)wrapper=LoadLibraryW(L"ControlWrapperFixture.dll");
     if(!wrapper)return sl::Result::eErrorNotInitialized;

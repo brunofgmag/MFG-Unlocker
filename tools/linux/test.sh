@@ -24,15 +24,19 @@ declare -A not_runnable=(
     [dlss5-own-queue-layer]="needs WARP, which Wine does not provide"
     [dlss5-replace-failure]="needs WARP, which Wine does not provide"
     [dlss5-hdr-bridge-hue]="needs WARP, which Wine does not provide"
+    [XmxRuntimeDeviceTests]="needs a D3D12 hardware device at feature level 12_0; Wine's vkd3d lists only a generic adapter and refuses 12_0"
 )
 
 regression_cases=(default-clean default-legacy default-fixed default-dynamic default-follow default-environment
+    default-xmx default-xmx-standalone
     loader-version loader-winmm crash-reporter-host themida-imports control control-locked status-transport
     scoped-import scoped-factory policy dynamic-availability vulkan-menu-status gpuname-off gpuname-on
     gpuname-invalid small-stack-resolver log-retention interval-retention log-location session-diagnostics
     engine-direct engine-dynamic engine-late engine-middleware engine-external engine-conflict)
 
-regression_targets=(StartupDefaultsTests ReleaseLoadCheck ThemidaImportHost ControlResolverTests
+source_level_cases=(scoped-factory-local-dxgi adapter-parent-local-dxgi)
+
+regression_targets=(AdapterParentTests DxgiForwarderFixture StartupDefaultsTests ReleaseLoadCheck ThemidaImportHost ControlResolverTests
     ControlWrapperFixture StatusTransportTests ScopedImportTests ScopedFactoryTests ScopedCallerFixture
     NvidiaPolicyTests DynamicAvailabilityTests VulkanMenuStatusTests GpuNameStartupTests
     SmallStackResolverTests LogRetentionTests SessionDiagnosticsTests EngineFactoryTests
@@ -116,6 +120,15 @@ run_regression_case() {
     fi
 }
 
+run_source_level_case() {
+    local case_name=$1 output=$tests_build/release_regression/results
+    if regression_run "$dll" "$case_name" "$output"; then
+        record release_regression "$case_name" passed ""
+    else
+        record release_regression "$case_name" failed "$(tail -n 1 "$output/$case_name.log")"
+    fi
+}
+
 run_regression_project() {
     local case_name
     if [ ! -f "$dll" ]; then
@@ -128,10 +141,13 @@ run_regression_project() {
     if "$here/wine.sh" "$tests_build/release_regression/FactoryRevisionTests.exe" >/dev/null 2>&1; then
         record release_regression FactoryRevisionTests passed ""
     else
-        record release_regression FactoryRevisionTests "not runnable" "Wine's ntdll lacks RtlIsThreadWithinLoaderCallout, so native::InsideLoader() is always true and the factory gateway never wraps"
+        record release_regression FactoryRevisionTests failed "run build/linux-tests/release_regression/FactoryRevisionTests.exe under tools/linux/wine.sh for its output"
     fi
     for case_name in "${regression_cases[@]}"; do
         run_regression_case "$case_name"
+    done
+    for case_name in "${source_level_cases[@]}"; do
+        run_source_level_case "$case_name"
     done
 }
 
@@ -154,6 +170,8 @@ run_project blackwell_runtime
 run_project turing_runtime
 run_project ampere_runtime -DSTREAMLINE_ROOT="${root[streamline]}" \
     -DNGX_INCLUDE_DIR="${root[streamline]}/external/ngx-sdk/include" -DVULKAN_INCLUDE_DIR="${root[vulkan12]}"
+run_project xmx -DSTREAMLINE_ROOT="${root[streamline]}" -DXESS_SDK_ROOT="${root[xess]}" \
+    -DMFG_GENERATED_DIR="$build/generated" -DMFG_PAYLOAD_DLL="$dll" -DXMX_RUNTIME_DIR="${root[xess]}/bin"
 run_project dlss5 -DSTREAMLINE_ROOT="${root[streamline]}" -DDLSS5_CANDIDATE_DLL="$dll"
 run_regression_project
 
