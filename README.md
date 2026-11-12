@@ -2,10 +2,11 @@
 
 ## About this fork
 
-This is a fork of [dashdogy/MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker) v1.7.1 with two additions:
-fixes that let MFG Unlocker run under Proton and Wine on Linux, and the XMX generation mode from
-[mavismmg/MFGAdaUnlock-RenoDx](https://github.com/mavismmg/MFGAdaUnlock-RenoDx). The rest of this README is upstream's,
-and its Quick start downloads upstream's release, which has neither. This fork's builds are on its own
+This is a fork of [dashdogy/MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker) v1.7.1 with three additions:
+fixes that let MFG Unlocker run under Proton and Wine on Linux, the XMX generation mode from
+[mavismmg/MFGAdaUnlock-RenoDx](https://github.com/mavismmg/MFGAdaUnlock-RenoDx), and an ANR FG generation mode for
+Apex Compute's [ANR FG](https://github.com/apex-compute/ANR). The rest of this README is upstream's, and its Quick
+start downloads upstream's release, which has none of them. This fork's builds are on its own
 [Releases](https://github.com/brunofgmag/MFG-Unlocker/releases) page.
 
 **XMX** runs Intel's XeFG model inside the game's own DLSS Frame Generation on RTX 40 and RTX 50 GPUs. DLSS Frame
@@ -22,6 +23,21 @@ XMX stays off on RTX 30 and RTX 20 GPUs and while XeMFG standalone is on.
 **XeLL sleep**, under Generation model, sends the game's Reflex sleep to Intel XeLL while XMX generates. Under Proton it
 also keeps the low latency mode off in vkd3d-proton, so vkd3d-proton keeps its own two-frame queue limit and the
 launch option `VKD3D_DISABLE_EXTENSIONS=VK_NV_low_latency2` is no longer needed.
+
+**ANR FG** hands the game's DLSS Frame Generation to Apex Compute's ANR FG on RTX 40 and RTX 50 GPUs, in D3D12
+games. ANR FG draws the generated frames and DLSS Frame Generation still presents them; MFG Unlocker never creates
+NVIDIA's generator. ANR FG is a closed-source beta, and this fork does not ship it. To turn it on:
+
+1. Download an ANR FG package from [ANR's Releases](https://github.com/apex-compute/ANR/releases) and copy the contents
+   of its `Apex Neural Rendering FG/dlssg` folder (`nvngx_dlssg.dll`, `nr_fg.ini` and the folders next to them) into
+   a folder named `RTXMFG-ANR` beside MFG Unlocker. Don't run ANR FG's own installer in that game; it installs
+   OptiScaler. MFG Unlocker loads ANR FG from a copy it writes in that folder, `anr_fg_provider.dll`, because under
+   Proton a second DLL named `nvngx_dlssg.dll` can load as NVIDIA's.
+2. In the menu, set **Generation model** to **ANR FG** and restart the game.
+
+ANR FG stays off on RTX 30 and RTX 20 GPUs, while XeMFG standalone or XMX is on, and while OptiScaler owns the controls.
+If its DLL is missing or fails to start, NVIDIA's generator takes over, and MFG Unlocker's log says why in a line
+starting with `ANR`.
 
 **Proton fixes**, each tested in games under Proton:
 

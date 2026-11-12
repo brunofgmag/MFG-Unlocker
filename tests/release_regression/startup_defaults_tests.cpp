@@ -40,6 +40,8 @@ int wmain(int argc, wchar_t** argv)
     else if(mode==L"follow") saved=R"({"followGame":true,"mode":"follow","multiplier":2})";
     else if(mode==L"xmx") saved=R"({"followGame":true,"mode":"follow","multiplier":2,"xmx":1})";
     else if(mode==L"xmx-standalone") saved=R"({"followGame":true,"mode":"follow","multiplier":2,"xmx":1,"xemfgStandalone":1})";
+    else if(mode==L"anr") saved=R"({"followGame":true,"mode":"follow","multiplier":2,"anr":1})";
+    else if(mode==L"anr-xmx") saved=R"({"followGame":true,"mode":"follow","multiplier":2,"anr":1,"xmx":1})";
     else if(mode!=L"clean"&&mode!=L"environment") return 2;
     if(std::filesystem::exists(config)) return 2; // Runner supplies an empty directory.
     if(!saved.empty()) std::ofstream(config)<<saved;
@@ -57,8 +59,9 @@ int wmain(int argc, wchar_t** argv)
     check(ui_status_json::CompleteObject(result),"fresh DLL publishes complete startup status");
     const std::string log=ReadShared(diagnostic_paths::RuntimeLog());
     auto logged=[&](const char* fragment){return log.find(fragment)!=std::string::npos;};
-    const bool xmx=mode==L"xmx"||mode==L"xmx-standalone";
-    const bool follow=mode==L"clean"||mode==L"follow"||xmx;
+    const bool xmx=mode==L"xmx"||mode==L"xmx-standalone"||mode==L"anr-xmx";
+    const bool anr=mode==L"anr"||mode==L"anr-xmx";
+    const bool follow=mode==L"clean"||mode==L"follow"||xmx||anr;
     check(has("followGame",follow?"true":"false"),"startup control preserves default or explicit follow intent");
     check(has("mode",follow?"\"follow\"":mode==L"dynamic"?"\"dynamic\"":"\"fixed\""),"startup mode matches requested semantics");
     const char* multiplier=mode==L"fixed"?"3":mode==L"environment"?"5":mode==L"legacy"||mode==L"dynamic"?"4":"2";
@@ -81,6 +84,21 @@ int wmain(int argc, wchar_t** argv)
         check(!has("xmxLatched","true"),"XMX stays off without the key");
         check(has("xmxStandIn","false"),"the stand-in stays off without the xmx key");
         check(!logged("XMX stand-in"),"no stand-in line without the xmx key");
+    }
+    if(anr)
+    {
+        const bool refused=mode==L"anr-xmx";
+        check(has("anrSaved","true"),"the saved anr key is read");
+        check(has("anrLatched",refused?"false":"true"),refused?"ANR FG is not latched while XMX is on":"ANR FG is latched at startup");
+        check(has("anrRefusal",refused?"\"xmx\"":"\"\""),refused?"the refusal names XMX":"nothing refuses ANR FG");
+        check(has("anrLoaded","false"),"ANR FG's provider waits for the first frame generation create");
+        check(logged(refused?"ANR refused: XMX is on":"ANR generation selected: ANR FG replaces NVIDIA's generator"),
+            refused?"the log says XMX refuses ANR FG":"the log says ANR FG replaces NVIDIA's generator");
+    }
+    else
+    {
+        check(has("anrSaved","false")&&has("anrLatched","false"),"ANR FG stays off without the key");
+        check(!logged("ANR "),"no ANR line without the anr key");
     }
     if(saved.empty()) check(!std::filesystem::exists(config),"default startup does not create an override file");
     else { std::ifstream file(config); std::string after{std::istreambuf_iterator<char>(file),{}};check(after==saved,"existing settings remain byte-identical"); }

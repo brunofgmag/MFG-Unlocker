@@ -19,6 +19,7 @@
 #include "xess/sdk_pacing.h"
 #include "xess/ngx_provider.h"
 #include "xess/ngx_provider_policy.h"
+#include "anr/anr.h"
 #include "xmx/xmx.h"
 #include "xmx/xmx_latency.h"
 #include "xmx/xmx_stand_in.h"
@@ -450,6 +451,7 @@ struct ControlConfig
     bool reflexSleepSkip = false;
     bool xmxXell = false;
     bool xmxStandIn = false;
+    bool anr = false;
     uint32_t xemfgFrames = 0;
     // XeMFG standalone's Dynamic MFG (xess/xemfg_dynamic.h), up to xemfgFrames: its target (0 = the FPS
     // limit, else just under the refresh rate), rounding (0 at most, 1 nearest, 2 at least), 1X allowed, "Use target as
@@ -1822,6 +1824,11 @@ bool TryParseControl(const char* data, size_t size, ControlConfig& control)
         && !TryParseUnsigned(content, "xmxStandIn", 0, 1, xmxStandIn))
         return false;
     parsed.xmxStandIn = xmxStandIn != 0;
+    uint32_t anr = 0;
+    if (FindJsonValue(content, "anr", xessOffset)
+        && !TryParseUnsigned(content, "anr", 0, 1, anr))
+        return false;
+    parsed.anr = anr != 0;
     if (FindJsonValue(content, "xemfgFrames", xessOffset)
         && !TryParseUnsigned(content, "xemfgFrames", 2, 6, parsed.xemfgFrames))
         return false;
@@ -1987,6 +1994,7 @@ ControlConfig EffectiveControl(const ControlConfig& saved) noexcept
     effective.xmx = false;
     effective.xmxXell = false;
     effective.xmxStandIn = false;
+    effective.anr = false;
     effective.dynamicExperimental56 = false;
     effective.generatedOnlyDebug = false;
     if (!optiscaler_host::UiHidden() || optiscaler_menu_tab::Offered())
@@ -2311,6 +2319,22 @@ xmx::Status ReadXmxStatus()
     return xmx::ReadStatus(driverGenerating);
 }
 
+std::string AnrStatus(const ControlConfig& control)
+{
+    const auto report = anr::ReadStatus();
+    return std::string(",\"anrSaved\":") + (control.anr ? "true" : "false")
+        + ",\"anrLatched\":" + (report.latched ? "true" : "false")
+        + ",\"anrRefusal\":\"" + JsonEscapeUtf8(report.refusal) + "\""
+        + ",\"anrLoaded\":" + (report.loaded ? "true" : "false")
+        + ",\"anrEvaluating\":" + (report.evaluating ? "true" : "false")
+        + ",\"anrLive\":" + std::to_string(report.live)
+        + ",\"anrCreates\":" + std::to_string(report.creates)
+        + ",\"anrEvaluates\":" + std::to_string(report.evaluates)
+        + ",\"anrFailedEvaluates\":" + std::to_string(report.failedEvaluates)
+        + ",\"anrRuntime\":\"" + JsonEscapeUtf8(report.runtime) + "\""
+        + ",\"anrFailure\":\"" + JsonEscapeUtf8(report.failure) + "\"";
+}
+
 std::string XmxStatus(const ControlConfig& control)
 {
     const auto report = ReadXmxStatus();
@@ -2324,7 +2348,8 @@ std::string XmxStatus(const ControlConfig& control)
         + ",\"xmxBypassed\":" + (report.bypassed ? "true" : "false")
         + ",\"xmxFramesLimit\":" + std::to_string(report.framesLimit)
         + ",\"xmxIdle\":\"" + JsonEscapeUtf8(report.idle) + "\""
-        + ",\"xmxFailure\":\"" + JsonEscapeUtf8(report.failure) + "\"";
+        + ",\"xmxFailure\":\"" + JsonEscapeUtf8(report.failure) + "\""
+        + AnrStatus(control);
 }
 
 // The XeMFG Vulkan host's status, with or without the D3D12 XeSS route.
@@ -10696,6 +10721,17 @@ void LogSessionState(const ControlConfig& control, bool heartbeat)
         if (stateAdded > 0) used += stateAdded;
         if (countersAdded > 0) counted += countersAdded;
     }
+    const auto anrReport = anr::ReadStatus();
+    if (anrReport.latched && used > 0 && counted > 0)
+    {
+        const int stateAdded = swprintf_s(state + used, _countof(state) - used, L" anr=on loaded=%d evaluating=%d live=%u",
+            anrReport.loaded, anrReport.evaluating, static_cast<unsigned>(anrReport.live));
+        const int countersAdded = swprintf_s(counters + counted, _countof(counters) - counted,
+            L" anrEvaluates=%llu anrFailedEvaluates=%llu", static_cast<unsigned long long>(anrReport.evaluates),
+            static_cast<unsigned long long>(anrReport.failedEvaluates));
+        if (stateAdded > 0) used += stateAdded;
+        if (countersAdded > 0) counted += countersAdded;
+    }
     const auto xess = xess_mod::ReadSnapshot();
     if (xess && xess->providerLoaded && used > 0 && counted > 0)
     {
@@ -10833,6 +10869,7 @@ DWORD WINAPI PatchWorker(void* context)
     // standalone host is on; OptiScaler raises it for its XeFG output).
     ConfigureXemfg(initialControl);
     xmx::Latch(initialControl.xmx, initialControl.xemfgStandalone);
+    anr::Latch(initialControl.anr, initialControl.xmx, initialControl.xemfgStandalone);
     ConfigureReflexSleep(initialControl);
     {
         const auto host = optiscaler_host::Read();

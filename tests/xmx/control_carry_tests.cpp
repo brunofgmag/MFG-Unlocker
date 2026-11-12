@@ -64,6 +64,10 @@ int main()
     for (const char* name : control_json::kCarriedFields) standInListed |= std::string_view(name) == "xmxStandIn";
     CHECK(standInListed);
 
+    bool anrListed = false;
+    for (const char* name : control_json::kCarriedFields) anrListed |= std::string_view(name) == "anr";
+    CHECK(anrListed);
+
     std::cout << "PASS: control carry\n";
     return 0;
 }

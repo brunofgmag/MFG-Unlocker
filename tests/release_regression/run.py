@@ -81,7 +81,8 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = [(f'default-{mode}', 'StartupDefaultsTests', mode, 'winmm.dll')
-             for mode in ('clean', 'legacy', 'fixed', 'dynamic', 'follow', 'environment', 'xmx', 'xmx-standalone')]
+             for mode in ('clean', 'legacy', 'fixed', 'dynamic', 'follow', 'environment', 'xmx', 'xmx-standalone',
+                          'anr', 'anr-xmx')]
     cases += [('loader-version', 'ReleaseLoadCheck', 'loader', 'version.dll'),
               ('crash-reporter-host', 'ReleaseLoadCheck', 'crash-reporter', 'winmm.dll'),
               # pluginprov.2: a CEF helper (BeamNG.drive starts its own executable with --type=renderer).

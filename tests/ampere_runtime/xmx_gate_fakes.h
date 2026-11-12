@@ -24,6 +24,19 @@ struct XmxFake
     int routesFailed = 0;
 };
 
+struct AnrFake
+{
+    bool answers = false;
+    NVSDK_NGX_Result result = NVSDK_NGX_Result_Success;
+    NVSDK_NGX_Handle* createHandle = nullptr;
+    int createCalls = 0;
+    int evaluateCalls = 0;
+    int releaseCalls = 0;
+    void* list = nullptr;
+    const void* parameters = nullptr;
+    const void* handle = nullptr;
+};
+
 struct GateFake
 {
     bool pullMaskRestart = false;
@@ -33,4 +46,5 @@ struct GateFake
 };
 
 extern XmxFake gXmx;
+extern AnrFake gAnr;
 extern GateFake gGate;

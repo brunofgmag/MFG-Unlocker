@@ -58,6 +58,7 @@ void WINAPI CountEvaluate(void*, uintptr_t, const void*, void*, uintptr_t, uintp
 void Reset()
 {
     gXmx = {};
+    gAnr = {};
     gGate = {};
     gCalls[2] = 0;
     gCalls[1] = 0;
@@ -194,6 +195,42 @@ void RuntimeReleaseCases()
         "runtime route: XMX declines the Release and the runtime's original runs");
 }
 
+void RuntimeAnrCases()
+{
+    Reset();
+    gXmx.latched = true;
+    gXmx.answersCreate = true;
+    gXmx.handles = true;
+    gXmx.answersRelease = true;
+    gAnr.answers = true;
+    gAnr.result = kGeneratorFailure;
+    gAnr.createHandle = reinterpret_cast<NVSDK_NGX_Handle*>(&gParameterMarker);
+    NVSDK_NGX_Handle* created = nullptr;
+    Check(RuntimeCreate(NVSDK_NGX_Feature_FrameGeneration, &created) == kGeneratorFailure
+            && created == gAnr.createHandle && gRuntime.calls[0] == 0,
+        "runtime route: ANR FG answers the Create and the runtime's original never runs");
+    Check(gAnr.createCalls == 1 && gAnr.list == &gListMarker && gAnr.parameters == &gParameterMarker,
+        "runtime route: ANR FG gets the Create's command list and parameters");
+    Check(gXmx.runtimeLayerCalls == 0, "runtime route: a Create ANR FG answers never reaches XMX");
+    Check(RuntimeEvaluate() == kGeneratorFailure && gRuntime.calls[1] == 0 && gAnr.evaluateCalls == 1
+            && gAnr.handle == &gHandleMarker && gXmx.runtimeLayerCalls == 0,
+        "runtime route: ANR FG answers the Evaluate before XMX is asked");
+    Check(gRuntime.release(&gHandleMarker) == kGeneratorFailure && gRuntime.calls[2] == 0 && gAnr.releaseCalls == 1
+            && gXmx.runtimeLayerCalls == 0,
+        "runtime route: ANR FG answers the Release before XMX is asked");
+
+    gAnr.answers = false;
+    gXmx.createHandle = reinterpret_cast<NVSDK_NGX_Handle*>(&gHandleMarker);
+    Check(RuntimeCreate(NVSDK_NGX_Feature_FrameGeneration, &created) == NVSDK_NGX_Result_Success
+            && created == gXmx.createHandle && gAnr.createCalls == 2 && gXmx.createCalls == 1,
+        "runtime route: a Create ANR FG declines goes on to XMX");
+    Check(RuntimeEvaluate() == gXmx.result && gAnr.evaluateCalls == 2 && gXmx.evaluateCalls == 1,
+        "runtime route: an Evaluate ANR FG declines goes on to XMX");
+    Check(gRuntime.release(&gHandleMarker) == NVSDK_NGX_Result_Success && gAnr.releaseCalls == 2
+            && gXmx.releaseCalls == 1,
+        "runtime route: a Release ANR FG declines goes on to XMX");
+}
+
 void RuntimeRouteCases()
 {
     if (!LoadRuntimeFixture())
@@ -205,6 +242,7 @@ void RuntimeRouteCases()
     RuntimeCreateCases();
     RuntimeEvaluateCases();
     RuntimeReleaseCases();
+    RuntimeAnrCases();
 }
 }
 
@@ -272,6 +310,7 @@ int wmain()
     Check(gGate.beforeEvaluateCalls == 1, "XMX handled: the route's own pre-call still counted the Evaluate");
     Check(gXmx.providerLayerCalls == 1 && gXmx.runtimeLayerCalls == 0,
         "the provider route offers the Evaluate to XMX at the provider layer only");
+    Check(gAnr.evaluateCalls == 0, "the provider route never offers the Evaluate to ANR FG");
 
     gXmx.handles = false;
     Check(Evaluate() == kOriginalEvaluate && gCalls[1] == 1, "XMX latched and declined: NVIDIA's original runs");

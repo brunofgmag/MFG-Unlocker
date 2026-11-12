@@ -55,7 +55,12 @@ struct State
     BOOL xmxEvaluating = FALSE, xmxBypassed = FALSE, xmxXell = FALSE, xmxXellReady = FALSE;
     uint32_t xmxFramesLimit = 0;
     std::string xmxRefusal, xmxIdle, xmxFailure;
+    BOOL anrSaved = FALSE, anrLatched = FALSE, anrLoaded = FALSE, anrEvaluating = FALSE;
+    uint32_t anrLive = 0;
+    std::string anrRefusal, anrFailure;
 };
+
+enum class Model : int { eNvidia = 0, eXmx = 1, eAnr = 2 };
 
 inline bool XmxFailed(const State& state) noexcept
 {
@@ -67,9 +72,41 @@ inline bool XmxRefused(const State& state) noexcept
     return state.xemfgStandalone || !state.xmxRefusal.empty();
 }
 
-inline bool XmxModelLocked(const State& state) noexcept
+inline bool AnrRefused(const State& state) noexcept
 {
-    return XmxRefused(state) && !state.xmxSaved;
+    return state.xemfgStandalone || (!state.anrRefusal.empty() && state.anrRefusal != "xmx");
+}
+
+inline bool AnrFailed(const State& state) noexcept
+{
+    return state.anrLatched && !state.anrEvaluating && !state.anrFailure.empty();
+}
+
+inline Model SavedModel(const State& state) noexcept
+{
+    if (state.xmxSaved) return Model::eXmx;
+    return state.anrSaved ? Model::eAnr : Model::eNvidia;
+}
+
+inline bool ModelRefused(const State& state, Model model) noexcept
+{
+    switch (model)
+    {
+    case Model::eXmx: return XmxRefused(state);
+    case Model::eAnr: return AnrRefused(state);
+    default: return false;
+    }
+}
+
+inline bool ModelLocked(const State& state) noexcept
+{
+    return SavedModel(state) == Model::eNvidia && XmxRefused(state) && AnrRefused(state);
+}
+
+inline bool ModelRestartPending(const State& state) noexcept
+{
+    const bool anrBlockedByXmx = state.anrRefusal == "xmx" && state.xmxSaved;
+    return state.xmxSaved != state.xmxLatched || (!anrBlockedByXmx && state.anrSaved != state.anrLatched);
 }
 
 inline bool XmxXellShown(const State& state) noexcept
@@ -168,6 +205,13 @@ State Read(const std::string& text, BoolReader boolean, IntegerReader integer, S
     string(text, "xmxRefusal", next.xmxRefusal);
     string(text, "xmxIdle", next.xmxIdle);
     string(text, "xmxFailure", next.xmxFailure);
+    boolean(text, "anrSaved", next.anrSaved);
+    boolean(text, "anrLatched", next.anrLatched);
+    boolean(text, "anrLoaded", next.anrLoaded);
+    boolean(text, "anrEvaluating", next.anrEvaluating);
+    integer(text, "anrLive", next.anrLive);
+    string(text, "anrRefusal", next.anrRefusal);
+    string(text, "anrFailure", next.anrFailure);
     if (!boolean(text, "xessAvailable", next.available) || !next.available) return next;
     boolean(text, "xessHooksActive", next.hooksActive);
     boolean(text, "xessInitialized", next.initialized);

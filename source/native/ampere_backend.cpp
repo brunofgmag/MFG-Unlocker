@@ -21,6 +21,7 @@
 #include "fg_lifetime_tracker.h"
 #include "xess/vulkan/vk_host.h"
 #include "xess/d3d12_host.h"
+#include "anr/anr.h"
 #include "xmx/xmx.h"
 #if MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY
 #include "midpoint_fix.h"
@@ -1351,7 +1352,7 @@ dlss5::Api Dlss5Api(const Route& route,CreateFn create,EvaluateFn evaluate,Relea
 
 bool RuntimeStandInAnswers(xmx::ProviderCall call, const xmx::ProviderArgs& args, NVSDK_NGX_Result& result) noexcept
 {
-    return xmx::AnswerNgxCall(xmx::NgxLayer::eRuntime, call, args, result);
+    return anr::AnswerNgxCall(call, args, result) || xmx::AnswerNgxCall(xmx::NgxLayer::eRuntime, call, args, result);
 }
 
 bool RuntimeStandInCreate(ID3D12GraphicsCommandList* command, NVSDK_NGX_Feature feature,
