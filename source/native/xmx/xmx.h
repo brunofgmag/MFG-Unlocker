@@ -40,6 +40,7 @@ Selection Latch(bool requested, bool standaloneRequested) noexcept;
 bool Latched() noexcept;
 void NoteProviderRoute(bool installed) noexcept;
 void BeforeCreate() noexcept;
+void PrepareXell() noexcept;
 void NoteCreateMemory(void* commandList) noexcept;
 bool Evaluate(void* commandList, const void* parameters, NVSDK_NGX_Result& result) noexcept;
 bool AnswerNgxCall(NgxLayer layer, ProviderCall call, const ProviderArgs& args, NVSDK_NGX_Result& result) noexcept;

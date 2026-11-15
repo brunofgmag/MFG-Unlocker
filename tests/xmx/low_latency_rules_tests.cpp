@@ -16,15 +16,9 @@
 int main()
 {
     using xmx::low_latency::Forwarded;
-    using xmx::low_latency::HoldWanted;
     using xmx::low_latency::kReleased;
     using xmx::low_latency::Request;
     using xmx::low_latency::Resync;
-
-    static_assert(HoldWanted(true, true));
-    static_assert(!HoldWanted(true, false));
-    static_assert(!HoldWanted(false, true));
-    static_assert(!HoldWanted(false, false));
 
     static_assert(Forwarded({true, true, 500}, false) == Request{true, true, 500});
     static_assert(Forwarded({true, false, 0}, false) == Request{true, false, 0});

@@ -109,14 +109,14 @@ inline bool ModelRestartPending(const State& state) noexcept
     return state.xmxSaved != state.xmxLatched || (!anrBlockedByXmx && state.anrSaved != state.anrLatched);
 }
 
-inline bool XmxXellShown(const State& state) noexcept
+inline bool XellShown(const State& state) noexcept
 {
-    return state.xmxLatched && !state.optiScaler;
+    return !state.optiScaler;
 }
 
-inline bool XmxXellWaiting(const State& state) noexcept
+inline bool XellWaiting(const State& state) noexcept
 {
-    return XmxXellShown(state) && state.xmxXell && !state.xmxXellReady;
+    return XellShown(state) && state.xmxXell && !state.xmxXellReady;
 }
 
 // latency.1: the backend's latencyPacingDetail string (patcher.cpp LatencyPacingStatus).

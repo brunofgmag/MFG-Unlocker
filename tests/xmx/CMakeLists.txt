@@ -70,6 +70,7 @@ foreach(mode not-available forwarding install-with-hold-on second-device)
 endforeach()
 if(TARGET XmxLatencyTests)
     add_test(NAME XmxLatencyTests COMMAND XmxLatencyTests fakes)
+    add_test(NAME XmxLatencyPendingTests COMMAND XmxLatencyTests pending)
     add_test(NAME XmxLatencyRuntimeTests COMMAND XmxLatencyTests runtime "${XMX_RUNTIME_DIR}")
     set_tests_properties(XmxLatencyRuntimeTests PROPERTIES SKIP_RETURN_CODE 2)
 endif()
@@ -79,6 +80,7 @@ if(TARGET XmxRuntimeTests)
     set_tests_properties(XmxRuntimeDeviceTests PROPERTIES SKIP_RETURN_CODE 2)
     foreach(mode route-before-latch no-route routes-without-latch hooked-without-latch evaluate-entry translated-gpu translated-gpu-first
             standalone-keeps-its-reason native-gpu loaded-runtime folder-runtime loaded-not-fg78
+            xell-without-xmx xell-then-xmx xell-not-found
             stand-in-key-off stand-in-not-latched stand-in-no-runtime stand-in-create stand-in-route-failed stand-in-evaluate
             stand-in-release stand-in-limit)
         string(REPLACE "-" "_" name "XmxModule_${mode}")

@@ -8,6 +8,7 @@
 #include "xess/xess_mod.h"
 #include "xmx/xmx.h"
 #include "xmx/xmx_generator.h"
+#include "xmx/xmx_latency.h"
 #include "xmx/xmx_stand_in.h"
 
 namespace
@@ -274,6 +275,45 @@ void LoadedRuntimeFromFolder(const std::wstring& folder)
     Check(fg && ll, "the folder's pair was loaded");
     Check(gAttachCalls == 1 && gAttached.fg == fg, "the generator attaches to the folder's copy");
     Check(gPublishedFg == fg && gPublishedLl == ll, "the model is published on the folder's pair");
+}
+
+bool SelfInFolder(const std::wstring& folder)
+{
+    gSelf = LoadFrom(folder, L"libxess_dx11.dll", DONT_RESOLVE_DLL_REFERENCES);
+    return Check(gSelf != nullptr, "a module in the runtime folder stands in for MFG Unlocker")
+        && Check(GetModuleHandleW(L"libxess_fg.dll") == nullptr && GetModuleHandleW(L"libxell.dll") == nullptr,
+            "the game loaded neither library");
+}
+
+void XellWithoutXmx(const std::wstring& folder)
+{
+    if (!SelfInFolder(folder)) return;
+    Check(!xmx::Latched(), "XMX is not latched");
+    xmx::PrepareXell();
+    Check(GetModuleHandleW(L"libxell.dll") != nullptr, "XeLL loads from the runtime folder without XMX");
+    Check(xmx::latency::Attached(), "the XeLL sleep module is attached to it");
+    Check(GetModuleHandleW(L"libxess_fg.dll") == nullptr && gAttachCalls == 0, "XeFG is neither loaded nor attached");
+    Check(xmx::ReadStatus(false).failure.empty(), "XMX reports no failure");
+}
+
+void XellThenXmx(const std::wstring& folder)
+{
+    if (!SelfInFolder(folder)) return;
+    xmx::PrepareXell();
+    const HMODULE ll = GetModuleHandleW(L"libxell.dll");
+    Check(xmx::Latch(true, false) == xmx::Selection::eOn, "XMX latches on");
+    xmx::BeforeCreate();
+    const HMODULE fg = GetModuleHandleW(L"libxess_fg.dll");
+    Check(ll && fg, "XMX loads XeFG beside the XeLL already loaded");
+    Check(gAttachCalls == 1 && gPublishedFg == fg && gPublishedLl == ll, "XMX publishes its model on that pair");
+}
+
+void XellNotFound()
+{
+    xmx::PrepareXell();
+    Check(GetModuleHandleW(L"libxell.dll") == nullptr && !xmx::latency::Attached(),
+        "without a runtime folder XeLL is neither loaded nor attached");
+    Check(xmx::ReadStatus(false).failure.empty(), "a missing XeLL is not an XMX failure");
 }
 
 void LoadedRuntimeNotFg78(const std::wstring& folder)
@@ -621,6 +661,9 @@ int wmain(int argc, wchar_t** argv)
     else if (mode == L"loaded-runtime") LoadedRuntime(folder);
     else if (mode == L"folder-runtime") LoadedRuntimeFromFolder(folder);
     else if (mode == L"loaded-not-fg78") LoadedRuntimeNotFg78(folder);
+    else if (mode == L"xell-without-xmx") XellWithoutXmx(folder);
+    else if (mode == L"xell-then-xmx") XellThenXmx(folder);
+    else if (mode == L"xell-not-found") XellNotFound();
     else if (mode == L"stand-in-key-off") StandInKeyOff(folder);
     else if (mode == L"stand-in-not-latched") StandInNotLatched(folder);
     else if (mode == L"stand-in-no-runtime") StandInNoRuntime();

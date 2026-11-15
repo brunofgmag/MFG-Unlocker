@@ -181,8 +181,6 @@ void NothingBeforeAttach()
     Check(!xmx::latency::Ready(), "not ready before anything is attached");
     xmx::latency::Marker(XELL_SIMULATION_START, 10);
     Check(!xmx::latency::Sleep(10), "Sleep before attach returns false");
-    xmx::latency::ObserveDevice(Device(0x1000));
-    Check(!xmx::latency::Ready() && gFakes.creates == 0, "a device before attach creates nothing");
     Check(gFakes.marked.empty() && gFakes.sleeps == 0, "Marker and Sleep before attach reach no function");
     Check(xmx::latency::DrainLine().empty(), "no line without a context");
 }
@@ -391,6 +389,21 @@ int Fakes_()
     return 0;
 }
 
+int Pending()
+{
+    xmx::latency::ObserveDevice(Device(0xE000));
+    Check(!xmx::latency::Ready() && gFakes.creates == 0, "a device seen before attach creates nothing yet");
+    xmx::latency::Attach(FakeFunctions());
+    Check(xmx::latency::Ready(), "the attach makes the device seen before it ready");
+    Check(gFakes.creates == 1 && gFakes.lastDevice == Device(0xE000), "the context is created on that device");
+    Check(gFakes.modes == 1 && gFakes.lastLowLatency, "low-latency mode is set on it");
+    xmx::latency::Attach(FakeFunctions());
+    Check(gFakes.creates == 1 && gFakes.destroys == 0, "a second attach keeps the context it has");
+    xmx::latency::ObserveDevice(Device(0xE000));
+    Check(gFakes.creates == 1, "the same device after the attach creates nothing more");
+    return 0;
+}
+
 int Runtime(const std::wstring& folder)
 {
     const HMODULE ll = LoadLibraryExW((folder + L"\\libxell.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
@@ -465,6 +478,7 @@ int wmain(int argc, wchar_t** argv)
     const std::wstring mode = argc > 1 ? argv[1] : L"";
     int code = 1;
     if (mode == L"fakes") code = Fakes_();
+    else if (mode == L"pending") code = Pending();
     else if (mode == L"runtime" && argc > 2) code = Runtime(argv[2]);
     else std::printf("FAIL unknown mode\n");
     std::printf("XMX_LATENCY checks=%u failures=%u\n", gChecks, gFailures);

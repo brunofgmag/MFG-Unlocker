@@ -69,27 +69,29 @@ void Reading()
 void Rows()
 {
     xess_ui::State state;
-    Check(!xess_ui::XmxXellShown(state), "the row is hidden while XMX is not latched");
+    Check(xess_ui::XellShown(state), "the row shows with NVIDIA's generator");
+    state.anrLatched = TRUE;
+    Check(xess_ui::XellShown(state), "the row shows with ANR FG");
+    state.anrLatched = FALSE;
     state.xmxLatched = TRUE;
-    Check(xess_ui::XmxXellShown(state), "the row shows while XMX is latched");
+    Check(xess_ui::XellShown(state), "the row shows with XMX");
     state.optiScaler = TRUE;
-    Check(!xess_ui::XmxXellShown(state), "the row is hidden while OptiScaler owns the controls");
+    Check(!xess_ui::XellShown(state), "the row is hidden while OptiScaler owns the controls");
     state.optiScaler = FALSE;
-    for (const BOOL on : {FALSE, TRUE})
-        for (const BOOL ready : {FALSE, TRUE})
-        {
-            state.xmxXell = on;
-            state.xmxXellReady = ready;
-            const bool waits = xess_ui::XmxXellWaiting(state);
-            Check(waits == (on && !ready), "waiting is on without a ready context only");
-        }
+    for (const BOOL latched : {FALSE, TRUE})
+        for (const BOOL on : {FALSE, TRUE})
+            for (const BOOL ready : {FALSE, TRUE})
+            {
+                state.xmxLatched = latched;
+                state.xmxXell = on;
+                state.xmxXellReady = ready;
+                const bool waits = xess_ui::XellWaiting(state);
+                Check(waits == (on && !ready), "waiting is on without a ready context only, with or without XMX");
+            }
     state.xmxXell = TRUE;
     state.xmxXellReady = FALSE;
-    state.xmxLatched = FALSE;
-    Check(!xess_ui::XmxXellWaiting(state), "nothing waits while XMX is not latched");
-    state.xmxLatched = TRUE;
     state.optiScaler = TRUE;
-    Check(!xess_ui::XmxXellWaiting(state), "nothing waits while OptiScaler owns the controls");
+    Check(!xess_ui::XellWaiting(state), "nothing waits while OptiScaler owns the controls");
 }
 
 void ModelCombo()
