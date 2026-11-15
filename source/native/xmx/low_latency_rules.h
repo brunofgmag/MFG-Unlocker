@@ -15,11 +15,6 @@ struct Request
 
 constexpr Request kReleased{false, false, 0};
 
-constexpr bool HoldWanted(bool xmxXell, bool latched) noexcept
-{
-    return xmxXell && latched;
-}
-
 constexpr Request Forwarded(Request requested, bool hold) noexcept
 {
     return {requested.mode && !hold, requested.boost && !hold, requested.intervalUs};

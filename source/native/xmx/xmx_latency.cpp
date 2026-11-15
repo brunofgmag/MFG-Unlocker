@@ -23,7 +23,7 @@ std::mutex gLock;
 Functions gFunctions{};
 bool gAttached = false;
 xell_context_handle_t gContext = nullptr;
-const ID3D12Device* gDevice = nullptr;
+ID3D12Device* gDevice = nullptr;
 uint32_t gLatestSimulation = 0;
 Counts gCounts;
 xell_result_t gLastSleepFailure = XELL_RESULT_SUCCESS;
@@ -75,7 +75,7 @@ std::string Outcome(xell_result_t result)
 
 bool DeviceChangeLocked(ID3D12Device* device) noexcept
 {
-    return gAttached && device != nullptr && device != gDevice;
+    return device != nullptr && device != gDevice;
 }
 
 void DestroyLocked() noexcept
@@ -123,7 +123,9 @@ void Attach(const Functions& functions) noexcept
 {
     std::lock_guard lock(gLock);
     gFunctions = functions;
+    const bool first = !gAttached;
     gAttached = true;
+    if (first && gDevice) CreateLocked(gDevice);
 }
 
 void ObserveDevice(ID3D12Device* device) noexcept
@@ -139,7 +141,7 @@ void ObserveDevice(ID3D12Device* device) noexcept
         if (!DeviceChangeLocked(device)) return;
         DestroyLocked();
         gDevice = device;
-        CreateLocked(device);
+        if (gAttached) CreateLocked(device);
     }
     catch (...) {}
 }
@@ -170,6 +172,19 @@ void Marker(uint32_t marker, uint32_t token, const char* source) noexcept
         if (marker == XELL_SIMULATION_START && id > gLatestSimulation) gLatestSimulation = id;
     }
     catch (...) {}
+}
+
+bool Attached() noexcept
+{
+    try
+    {
+        std::lock_guard lock(gLock);
+        return gAttached;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 
 bool Ready() noexcept

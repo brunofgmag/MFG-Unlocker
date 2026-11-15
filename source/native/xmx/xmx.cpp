@@ -29,6 +29,7 @@ constexpr uint64_t kRecentMs = 2000;
 std::atomic<int> gSelection{static_cast<int>(Selection::eOff)};
 std::once_flag gLatchOnce;
 std::once_flag gRuntimeOnce;
+std::once_flag gXellOnce;
 std::atomic<bool> gCreateAwaitingEvaluate{false};
 std::atomic<bool> gRuntimeReady{false};
 std::atomic<bool> gStandIn{false};
@@ -81,15 +82,38 @@ Selection Current() noexcept
     return static_cast<Selection>(gSelection.load(std::memory_order_acquire));
 }
 
-std::optional<std::filesystem::path> RuntimeFolder()
+std::optional<std::filesystem::path> FindRuntimeFolder(std::string& reason)
 {
     const auto bases = xess_runtime_search::ReadBases(xess_runtime_search::ModulePath(single_module::Self()),
         xess_runtime_search::ModulePath(nullptr));
     const auto search = xess_runtime_search::Find(bases, xess_runtime_search::Order::eD3D12);
     if (search.found != SIZE_MAX) return search.folders[search.found].path;
-    status::Fail("libxess_fg.dll and libxell.dll were not found ("
-        + (search.reason.empty() ? std::string("not_found") : search.reason) + ")");
+    reason = search.reason.empty() ? std::string("not_found") : search.reason;
     return std::nullopt;
+}
+
+std::optional<std::filesystem::path> RuntimeFolder()
+{
+    std::string reason;
+    auto folder = FindRuntimeFolder(reason);
+    if (!folder) status::Fail("libxess_fg.dll and libxell.dll were not found (" + reason + ")");
+    return folder;
+}
+
+HMODULE XellModule()
+{
+    if (const HMODULE loaded = GetModuleHandleW(xess_runtime_search::kLl)) return loaded;
+    std::string reason;
+    const auto folder = FindRuntimeFolder(reason);
+    if (!folder)
+    {
+        Log("XeLL sleep: libxell.dll was not found (" + reason + ")");
+        return nullptr;
+    }
+    const HMODULE ll = LoadLibraryExW((*folder / xess_runtime_search::kLl).c_str(), nullptr,
+        LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!ll) Log("XeLL sleep: libxell.dll could not be loaded");
+    return ll;
 }
 
 const Rvas* SupportedRvas(HMODULE fg)
@@ -305,6 +329,26 @@ void Log(const std::string& text) noexcept
 void LogSummary(const std::string& text) noexcept
 {
     Emit(text);
+}
+
+void PrepareXell() noexcept
+{
+    std::call_once(gXellOnce, []
+    {
+        Quietly([]
+        {
+            const HMODULE ll = XellModule();
+            if (!ll) return;
+            latency::Functions functions;
+            if (!latency::Resolve(ll, functions))
+            {
+                Log("XeLL exports missing in libxell.dll");
+                return;
+            }
+            latency::Attach(functions);
+            Log("XeLL sleep runtime " + PathOf(ll));
+        });
+    });
 }
 
 Selection Latch(bool requested, bool standaloneRequested) noexcept

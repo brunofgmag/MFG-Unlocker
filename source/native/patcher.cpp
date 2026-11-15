@@ -2229,9 +2229,9 @@ void ConfigureReflexSleep(const ControlConfig& control) noexcept
             : L"Reflex sleep skip off: the game's slReflexSleep reaches the driver again");
     if (reflex_sleep::ConfigureXmxXell(control.xmxXell))
         Log(control.xmxXell
-            ? L"XMX XeLL sleep on: the game's slReflexSleep goes to XeLL while XMX is latched"
-            : L"XMX XeLL sleep off: the game's slReflexSleep goes back to the driver");
-    xmx::low_latency::Configure(xmx::low_latency::HoldWanted(control.xmxXell, xmx::Latched()));
+            ? L"XeLL sleep on: the game's slReflexSleep goes to XeLL with any generation model"
+            : L"XeLL sleep off: the game's slReflexSleep goes back to the driver");
+    xmx::low_latency::Configure(control.xmxXell);
     if (xmx::ConfigureStandIn(control.xmxStandIn))
         Log(L"%s", xmx::stand_in::ConfigLine(control.xmxStandIn, xmx::Latched()));
 }
@@ -5244,6 +5244,23 @@ bool ResolveMidpointProvider(NgxDispatchRoute route, NgxGraphicsApi api,
     return true;
 }
 
+void ObserveXellDevice(IUnknown* device) noexcept
+{
+    ID3D12Device* d3d12 = nullptr;
+    if (!device || FAILED(device->QueryInterface(__uuidof(ID3D12Device), reinterpret_cast<void**>(&d3d12))) || !d3d12)
+        return;
+    xmx::latency::ObserveDevice(d3d12);
+    d3d12->Release();
+}
+
+void ObserveXellListDevice(ID3D12GraphicsCommandList* list) noexcept
+{
+    ID3D12Device* device = nullptr;
+    if (FAILED(list->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&device))) || !device) return;
+    xmx::latency::ObserveDevice(device);
+    device->Release();
+}
+
 void BeforeNgxCreateFeatureForRoute(NgxDispatchRoute route,
     NgxGraphicsApi api, void* commandContext, NVSDK_NGX_Feature feature,
     const NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** handle,
@@ -5386,6 +5403,8 @@ void BeforeNgxCreateFeatureForRoute(NgxDispatchRoute route,
             L"fully covered DLSS-G provider: path=%s", path.c_str());
     }
 
+    if (api == NgxGraphicsApi::eD3D12 && commandContext)
+        ObserveXellListDevice(static_cast<ID3D12GraphicsCommandList*>(commandContext));
     // The loader-friendly route cannot assume that Streamline exposed
     // slSetD3DDevice before this call. The command list is authoritative for
     // the device that will create the FG feature, so validate that adapter at
@@ -7337,7 +7356,8 @@ sl::Result HookSlReflexSleep(const sl::FrameToken& frame)
     // While XeMFG generates, the frame sleeps in XeLL only (the driver's Reflex sleep would be a second pacer,
     // judging the game by XeFG's extra presents: a 30 fps base fell to 17).
     const int64_t waitStart = main_thread_waits::Now();
-    const bool xmxXell = reflex_sleep::XmxXell() && xmx::Latched() && xmx::latency::Ready();
+    if (reflex_sleep::XmxXell()) xmx::PrepareXell();
+    const bool xmxXell = reflex_sleep::XmxXell() && xmx::latency::Ready();
     const auto route = reflex_sleep::Choose(xess_d3d12::ReplacesReflexSleep(), xmxXell, reflex_sleep::Skipping());
     if (route == reflex_sleep::Route::Xell)
     {
@@ -7683,6 +7703,7 @@ sl::Result HookSlSetD3DDevice(void* device)
     if (verifiedDevice)
     {
         xmx::low_latency::Observe(static_cast<IUnknown*>(device));
+        ObserveXellDevice(static_cast<IUnknown*>(device));
         gModuleInventoryDirty.store(true, std::memory_order_release);
         if (NativeDlssgPresetGpu())
         {

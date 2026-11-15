@@ -3778,13 +3778,13 @@ bool gXmxXellSaveFailed = false;
 void XmxXellControlRow()
 {
     auto& x = gXessUi;
-    if (!xess_ui::XmxXellShown(x)) return;
+    if (!xess_ui::XellShown(x)) return;
     bool on = x.xmxXell != FALSE;
     ControlRow("XeLL sleep");
     const bool changed = ImGui::Checkbox("##xmxxell", &on);
-    HelpMarker("While XMX generates frames, the game's Reflex sleep goes to Intel XeLL instead of NVIDIA's driver. "
+    HelpMarker("The game's Reflex sleep goes to Intel XeLL instead of NVIDIA's driver, whatever the generation model. "
         "vkd3d-proton keeps its own limit on how many frames the GPU can queue.\n"
-        "Changes apply right away.");
+        "It needs libxell.dll in RTXMFG-XeSS and only works in D3D12 games. Changes apply right away.");
     if (!changed) return;
     gXmxXellSaveFailed = !NativeFilePersistXmxXell(on);
     if (!gXmxXellSaveFailed) x.xmxXell = on ? TRUE : FALSE;
@@ -3951,7 +3951,8 @@ void XmxNotes()
     const auto& x = gXessUi;
     if (gXmxSaveFailed) Note(Tone::Bad, "The generation model could not be saved.");
     if (gXmxXellSaveFailed) Note(Tone::Bad, "The XeLL sleep setting could not be saved.");
-    if (xess_ui::XmxXellWaiting(x)) Note(Tone::Pending, "XeLL starts when XMX first runs.");
+    if (xess_ui::XellWaiting(x))
+        Note(Tone::Pending, "XeLL starts once it finds libxell.dll in RTXMFG-XeSS and the game's D3D12 device.");
     if (x.xmxRefusal == "translated_gpu")
         Note(Tone::Bad, "XMX is off: RTX 30 and RTX 20 GPUs run frame generation through MFG Unlocker's own program, "
             "which XMX cannot replace.");
