@@ -127,7 +127,7 @@ void Announce(Selection selection) noexcept
         Emit("generation selected: ANR FG replaces NVIDIA's generator");
         break;
     case Selection::eRefusedXmx:
-        Emit("refused: XMX is on, and only one model replaces NVIDIA's generator");
+        Emit("refused: XeMFG DLSS-G is on, and only one model replaces NVIDIA's generator");
         break;
     case Selection::eRefusedStandalone:
         Emit("refused: XeMFG standalone is on and replaces DLSS frame generation, which ANR FG needs");

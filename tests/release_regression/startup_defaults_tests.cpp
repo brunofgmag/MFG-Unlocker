@@ -74,16 +74,16 @@ int wmain(int argc, wchar_t** argv)
         check(has("xmxLatched",refused?"false":"true"),refused?"XMX is not latched while XeMFG standalone is on":"XMX is latched at startup");
         check(has("xmxRefusal",refused?"\"xemfg_standalone\"":"\"\""),refused?"the refusal names XeMFG standalone":"nothing refuses XMX");
         check(has("xmxStandIn","true"),"XMX on without the stand-in key turns the stand-in on");
-        check(logged("XMX stand-in on: the next frame generation create is answered without NVIDIA's generator")==!refused,
+        check(logged("XeMFG DLSS-G stand-in on: the next frame generation create is answered without NVIDIA's generator")==!refused,
             refused?"the stand-in line does not claim an answered create while XMX is not latched":"the stand-in line says the create is answered once XMX is latched");
-        check(logged("XMX stand-in on, but XMX is not latched")==refused,
+        check(logged("XeMFG DLSS-G stand-in on, but XeMFG DLSS-G is not latched")==refused,
             refused?"the stand-in line says XMX is not latched":"no not-latched stand-in line when XMX is latched");
     }
     else
     {
         check(!has("xmxLatched","true"),"XMX stays off without the key");
         check(has("xmxStandIn","false"),"the stand-in stays off without the xmx key");
-        check(!logged("XMX stand-in"),"no stand-in line without the xmx key");
+        check(!logged("XeMFG DLSS-G stand-in"),"no stand-in line without the xmx key");
     }
     if(anr)
     {
@@ -92,7 +92,7 @@ int wmain(int argc, wchar_t** argv)
         check(has("anrLatched",refused?"false":"true"),refused?"ANR FG is not latched while XMX is on":"ANR FG is latched at startup");
         check(has("anrRefusal",refused?"\"xmx\"":"\"\""),refused?"the refusal names XMX":"nothing refuses ANR FG");
         check(has("anrLoaded","false"),"ANR FG's provider waits for the first frame generation create");
-        check(logged(refused?"ANR refused: XMX is on":"ANR generation selected: ANR FG replaces NVIDIA's generator"),
+        check(logged(refused?"ANR refused: XeMFG DLSS-G is on":"ANR generation selected: ANR FG replaces NVIDIA's generator"),
             refused?"the log says XMX refuses ANR FG":"the log says ANR FG replaces NVIDIA's generator");
     }
     else

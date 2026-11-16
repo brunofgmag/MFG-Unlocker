@@ -431,7 +431,7 @@ int InitializeWithFallback(State& state, InitParams& init, uint32_t flags, bool 
 std::string InitFailure(DXGI_FORMAT format, int result)
 {
     if (format == DXGI_FORMAT_R16G16B16A16_FLOAT)
-        return "XMX cannot use this game's scRGB HDR output (result " + std::to_string(result)
+        return "XeMFG DLSS-G cannot use this game's scRGB HDR output (result " + std::to_string(result)
             + "); turn HDR off or use XeMFG";
     return "XeFG initialization returned " + std::to_string(result);
 }

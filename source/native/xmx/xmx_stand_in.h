@@ -10,10 +10,11 @@ namespace xmx::stand_in
 {
 inline const wchar_t* ConfigLine(bool configured, bool xmxLatched) noexcept
 {
-    if (!configured) return L"XMX stand-in off: the next frame generation create goes to NVIDIA's generator";
+    if (!configured) return L"XeMFG DLSS-G stand-in off: the next frame generation create goes to NVIDIA's generator";
     return xmxLatched
-        ? L"XMX stand-in on: the next frame generation create is answered without NVIDIA's generator"
-        : L"XMX stand-in on, but XMX is not latched: the next frame generation create goes to NVIDIA's generator";
+        ? L"XeMFG DLSS-G stand-in on: the next frame generation create is answered without NVIDIA's generator"
+        : L"XeMFG DLSS-G stand-in on, but XeMFG DLSS-G is not latched: the next frame generation create goes to "
+          L"NVIDIA's generator";
 }
 
 struct Handle

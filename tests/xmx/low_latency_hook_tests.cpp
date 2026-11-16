@@ -14,7 +14,7 @@ namespace xmx
 std::vector<std::string> gLines;
 void Log(const std::string& text) noexcept
 {
-    gLines.push_back("XMX " + text);
+    gLines.push_back("XeMFG DLSS-G " + text);
 }
 void LogSummary(const std::string& text) noexcept
 {
@@ -107,7 +107,7 @@ bool EveryLineIsXmxLowLatency()
 {
     if (xmx::gLines.empty()) return false;
     for (const auto& line : xmx::gLines)
-        if (line.rfind("XMX low latency ", 0) != 0) return false;
+        if (line.rfind("XeMFG DLSS-G low latency ", 0) != 0) return false;
     return true;
 }
 
@@ -226,7 +226,7 @@ int main(int argc, char** argv)
         std::printf("FAIL unknown mode\n");
         return 1;
     }
-    Check(EveryLineIsXmxLowLatency(), "every line starts with XMX low latency, the prefix once");
+    Check(EveryLineIsXmxLowLatency(), "every line starts with XeMFG DLSS-G low latency, the prefix once");
     std::printf("%u checks, %u failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

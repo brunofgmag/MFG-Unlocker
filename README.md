@@ -3,30 +3,32 @@
 ## About this fork
 
 This is a fork of [dashdogy/MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker) v1.7.1 with three additions:
-fixes that let MFG Unlocker run under Proton and Wine on Linux, the XMX generation mode from
+fixes that let MFG Unlocker run under Proton and Wine on Linux, the XeMFG DLSS-G generation mode from
 [mavismmg/MFGAdaUnlock-RenoDx](https://github.com/mavismmg/MFGAdaUnlock-RenoDx), and an ANR FG generation mode for
 Apex Compute's [ANR FG](https://github.com/apex-compute/ANR). The rest of this README is upstream's, and its Quick
 start downloads upstream's release, which has none of them. This fork's builds are on its own
 [Releases](https://github.com/brunofgmag/MFG-Unlocker/releases) page.
 
-**XMX** runs Intel's XeFG model inside the game's own DLSS Frame Generation on RTX 40 and RTX 50 GPUs. DLSS Frame
-Generation still presents the frames and keeps Reflex; XeFG only draws the generated frames. NVIDIA's generator is
-never created, which left about 940 MB more VRAM to Microsoft Flight Simulator 2024 at 4K. To turn it on:
+**XeMFG DLSS-G** (called XMX until MFGAdaUnlock-RenoDx 1.10.0) runs Intel's XeFG model inside the game's own DLSS
+Frame Generation on RTX 40 and RTX 50 GPUs. DLSS Frame Generation still presents the frames and keeps Reflex; XeFG only
+draws the generated frames. NVIDIA's generator is never created, which left about 940 MB more VRAM to Microsoft Flight
+Simulator 2024 at 4K. To turn it on:
 
 1. Download [Intel's XeSS SDK 3.0.2](https://github.com/intel/xess/releases/tag/v3.0.2) and copy `bin/libxess_fg.dll`
-   and `bin/libxell.dll` into a folder named `RTXMFG-XeSS` beside MFG Unlocker. XMX needs that `libxess_fg.dll`
-   (1.3.1.78); with another version NVIDIA's generator keeps running.
-2. In the menu, set **Generation model** to **XMX (Intel XeFG)** and restart the game.
+   and `bin/libxell.dll` into a folder named `RTXMFG-XeSS` beside MFG Unlocker. XeMFG DLSS-G needs that
+   `libxess_fg.dll` (1.3.1.78); with another version NVIDIA's generator keeps running.
+2. In the menu, set **Generation model** to **XeMFG DLSS-G** and restart the game. `RTXMFG-Universal.json` still saves
+   this choice as `"xmx"`.
 
-XMX stays off on RTX 30 and RTX 20 GPUs and while XeMFG standalone is on.
+XeMFG DLSS-G stays off on RTX 30 and RTX 20 GPUs and while XeMFG standalone is on.
 
 **XeLL sleep**, under Generation model, sends the game's Reflex sleep to Intel XeLL instead of NVIDIA's driver. It works
-with all three generation models (NVIDIA, XMX and ANR FG) in D3D12 games, and it needs `bin/libxell.dll` from the same
-XeSS SDK in the `RTXMFG-XeSS` folder. Under Proton it also keeps vkd3d-proton's low latency mode off, so vkd3d-proton
-keeps its own two-frame queue limit and you don't need the launch option
-`VKD3D_DISABLE_EXTENSIONS=VK_NV_low_latency2`. With XeLL sleep on, XeLL also applies the menu's **Reflex FPS limit**. The
-limit is the frame rate on screen: at 4x, a 120 FPS limit holds the game to 30 FPS. It pauses while Dynamic MFG is on,
-the same as when NVIDIA's driver applies it.
+with all three generation models (NVIDIA, XeMFG DLSS-G and ANR FG) in D3D12 games, and it needs `bin/libxell.dll` from
+the same XeSS SDK in the `RTXMFG-XeSS` folder. Under Proton it also keeps vkd3d-proton's low latency mode off, so
+vkd3d-proton keeps its own two-frame queue limit and you don't need the launch option
+`VKD3D_DISABLE_EXTENSIONS=VK_NV_low_latency2`. With XeLL sleep on, XeLL also applies the menu's **Reflex FPS limit**.
+The limit is the frame rate on screen: at 4x, a 120 FPS limit holds the game to 30 FPS. It pauses while Dynamic MFG is
+on, the same as when NVIDIA's driver applies it.
 
 **ANR FG** hands the game's DLSS Frame Generation to Apex Compute's ANR FG on RTX 40 and RTX 50 GPUs, in D3D12
 games. ANR FG draws the generated frames and DLSS Frame Generation still presents them; MFG Unlocker never creates
@@ -39,9 +41,9 @@ NVIDIA's generator. ANR FG is a closed-source beta, and this fork does not ship 
    Proton a second DLL named `nvngx_dlssg.dll` can load as NVIDIA's.
 2. In the menu, set **Generation model** to **ANR FG** and restart the game.
 
-ANR FG stays off on RTX 30 and RTX 20 GPUs, while XeMFG standalone or XMX is on, and while OptiScaler owns the controls.
-If its DLL is missing or fails to start, NVIDIA's generator takes over, and MFG Unlocker's log says why in a line
-starting with `ANR`.
+ANR FG stays off on RTX 30 and RTX 20 GPUs, while XeMFG standalone or XeMFG DLSS-G is on, and while OptiScaler owns the
+controls. If its DLL is missing or fails to start, NVIDIA's generator takes over, and MFG Unlocker's log says why in a
+line starting with `ANR`.
 
 **Proton fixes**, each tested in games under Proton:
 

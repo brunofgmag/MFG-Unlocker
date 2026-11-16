@@ -40,7 +40,7 @@ void Emit(const std::string& text) noexcept
 {
     try
     {
-        const std::string line = "XMX " + text;
+        const std::string line = "XeMFG DLSS-G " + text;
         const int count = MultiByteToWideChar(CP_UTF8, 0, line.data(), static_cast<int>(line.size()), nullptr, 0);
         if (count <= 0) return;
         std::wstring wide(static_cast<size_t>(count), L'\0');
@@ -211,11 +211,11 @@ void Announce(Selection selection) noexcept
             Emit("generation selected: Intel's XeFG replaces NVIDIA's generator");
             break;
         case Selection::eRefusedStandalone:
-            Emit("refused: XeMFG standalone is on and replaces DLSS frame generation, which XMX needs");
+            Emit("refused: XeMFG standalone is on and replaces DLSS frame generation, which XeMFG DLSS-G needs");
             break;
         case Selection::eRefusedTranslatedGpu:
             Emit("refused: this RTX 30 or RTX 20 GPU runs DLSS frame generation through MFG Unlocker's own program, "
-                "which XMX does not replace");
+                "which XeMFG DLSS-G does not replace");
             break;
         case Selection::eOff:
             break;

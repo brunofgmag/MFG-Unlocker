@@ -10786,9 +10786,9 @@ void LogMainThreadWaits(ULONGLONG& since)
     const std::string line = main_thread_waits::DrainLine();
     if (!line.empty()) Log(L"%hs", line.c_str());
     const std::string xell = xmx::latency::DrainLine();
-    if (!xell.empty()) Log(L"XMX %hs", xell.c_str());
+    if (!xell.empty()) Log(L"XeMFG DLSS-G %hs", xell.c_str());
     const std::string memory = xmx::MemoryLine();
-    if (!memory.empty()) Log(L"XMX %hs", memory.c_str());
+    if (!memory.empty()) Log(L"XeMFG DLSS-G %hs", memory.c_str());
 }
 
 #if MFG_UNLOCK_SESSION_DIAGNOSTICS
