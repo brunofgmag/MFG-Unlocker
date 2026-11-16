@@ -24,7 +24,9 @@ XMX stays off on RTX 30 and RTX 20 GPUs and while XeMFG standalone is on.
 with all three generation models (NVIDIA, XMX and ANR FG) in D3D12 games, and it needs `bin/libxell.dll` from the same
 XeSS SDK in the `RTXMFG-XeSS` folder. Under Proton it also keeps vkd3d-proton's low latency mode off, so vkd3d-proton
 keeps its own two-frame queue limit and you don't need the launch option
-`VKD3D_DISABLE_EXTENSIONS=VK_NV_low_latency2`.
+`VKD3D_DISABLE_EXTENSIONS=VK_NV_low_latency2`. With XeLL sleep on, XeLL also applies the menu's **Reflex FPS limit**. The
+limit is the frame rate on screen: at 4x, a 120 FPS limit holds the game to 30 FPS. It pauses while Dynamic MFG is on,
+the same as when NVIDIA's driver applies it.
 
 **ANR FG** hands the game's DLSS Frame Generation to Apex Compute's ANR FG on RTX 40 and RTX 50 GPUs, in D3D12
 games. ANR FG draws the generated frames and DLSS Frame Generation still presents them; MFG Unlocker never creates

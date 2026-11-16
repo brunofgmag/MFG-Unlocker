@@ -38,6 +38,7 @@ struct Fakes
     xell_result_t createResult = XELL_RESULT_SUCCESS, modeResult = XELL_RESULT_SUCCESS,
         sleepResult = XELL_RESULT_SUCCESS, markerResult = XELL_RESULT_SUCCESS;
     bool lastLowLatency = false;
+    uint32_t lastIntervalUs = 0;
     ID3D12Device* lastDevice = nullptr;
     xell_context_handle_t lastContext = nullptr;
     uint32_t lastSleepId = 0;
@@ -66,7 +67,8 @@ xell_result_t FakeSetSleepMode(xell_context_handle_t context, const xell_sleep_p
 {
     ++gFakes.modes;
     gFakes.lastContext = context;
-    gFakes.lastLowLatency = params->bLowLatencyMode == 1 && params->minimumIntervalUs == 0;
+    gFakes.lastLowLatency = params->bLowLatencyMode == 1;
+    gFakes.lastIntervalUs = params->minimumIntervalUs;
     return gFakes.modeResult;
 }
 
@@ -101,6 +103,7 @@ void Fresh()
     xmx::latency::DrainLine();
     gFakes = Fakes{};
     gLog.clear();
+    xmx::latency::SetFrameLimit(0, 1);
     xmx::latency::Attach(FakeFunctions());
 }
 
@@ -203,7 +206,8 @@ void SameDeviceTwice()
     xmx::latency::ObserveDevice(Device(0x2000));
     Check(xmx::latency::Ready(), "a device makes it ready");
     Check(gFakes.creates == 1 && gFakes.lastDevice == Device(0x2000), "the same device twice gives one create");
-    Check(gFakes.modes == 1 && gFakes.lastLowLatency, "low-latency mode is set once, with no interval");
+    Check(gFakes.modes == 1 && gFakes.lastLowLatency && gFakes.lastIntervalUs == 0,
+        "low-latency mode is set once, with no interval");
     Check(gFakes.destroys == 0, "nothing is destroyed for the same device");
     Check(Logged("XeLL context created"), "the creation is logged");
     Check(Untraced() == 1, "the creation is logged once");
@@ -348,6 +352,91 @@ void TraceIsBounded()
     Check(Traced() == 97, "a new context traces again");
 }
 
+void LimitBeforeTheContext()
+{
+    Fresh();
+    xmx::latency::SetFrameLimit(120, 1);
+    xmx::latency::ObserveDevice(Device(0xF000));
+    Check(gFakes.modes == 1 && gFakes.lastLowLatency && gFakes.lastIntervalUs == 8334,
+        "a limit set before the context is its interval from the start");
+    Check(Logged("XeLL frame limit 8334 us (120 FPS on screen at 1x)"), "the interval the context starts with is logged");
+    xmx::latency::Marker(XELL_SIMULATION_START, 1000);
+    xmx::latency::Sleep(1000);
+    Check(gFakes.modes == 1, "the sleep does not set the same interval again");
+}
+
+void LimitChangesOnTheNextSleep()
+{
+    Fresh();
+    xmx::latency::ObserveDevice(Device(0xF100));
+    xmx::latency::Marker(XELL_SIMULATION_START, 1100);
+    xmx::latency::SetFrameLimit(60, 1);
+    Check(gFakes.modes == 1, "a new limit waits for the sleep");
+    Check(xmx::latency::Sleep(1100) && gFakes.sleeps == 1, "the sleep still runs");
+    Check(gFakes.modes == 2 && gFakes.lastLowLatency && gFakes.lastIntervalUs == 16667,
+        "the sleep sets the new interval with low-latency mode kept on");
+    Check(Logged("XeLL frame limit 16667 us (60 FPS on screen at 1x)"), "the new interval is logged");
+    xmx::latency::Sleep(1100);
+    Check(gFakes.modes == 2, "an applied interval is not set again");
+    xmx::latency::SetFrameLimit(0, 1);
+    xmx::latency::Sleep(1100);
+    Check(gFakes.modes == 3 && gFakes.lastIntervalUs == 0, "a zero limit takes the interval off");
+    Check(Logged("XeLL frame limit off"), "taking it off is logged");
+}
+
+void LimitFailureIsRetried()
+{
+    Fresh();
+    xmx::latency::ObserveDevice(Device(0xF200));
+    xmx::latency::Marker(XELL_SIMULATION_START, 1200);
+    xmx::latency::SetFrameLimit(30, 1);
+    gFakes.modeResult = XELL_RESULT_ERROR_INVALID_ARGUMENT;
+    Check(xmx::latency::Sleep(1200), "the sleep runs although the interval was refused");
+    xmx::latency::Sleep(1200);
+    Check(gFakes.modes == 3, "a refused interval is tried again on the next sleep");
+    Check(Logged("XeLL frame limit 33334 us (30 FPS on screen at 1x) failed result -4") && Untraced() == 2,
+        "the refusal is logged once with its result");
+    gFakes.modeResult = XELL_RESULT_SUCCESS;
+    xmx::latency::Sleep(1200);
+    xmx::latency::Sleep(1200);
+    Check(gFakes.modes == 4 && gFakes.lastIntervalUs == 33334, "the interval lands once XeLL accepts it");
+    Check(Logged("XeLL frame limit 33334 us (30 FPS on screen at 1x)"), "the accepted interval is logged");
+}
+
+void LimitFollowsANewContext()
+{
+    Fresh();
+    xmx::latency::SetFrameLimit(40, 1);
+    xmx::latency::ObserveDevice(Device(0xF300));
+    xmx::latency::ObserveDevice(Device(0xF308));
+    Check(gFakes.creates == 2 && gFakes.modes == 2 && gFakes.lastIntervalUs == 25000,
+        "the context of a second device starts with the limit too");
+}
+
+void LimitCountsTheFramesOnScreen()
+{
+    Fresh();
+    xmx::latency::ObserveDevice(Device(0xF400));
+    xmx::latency::Marker(XELL_SIMULATION_START, 1400);
+    xmx::latency::SetFrameLimit(120, 4);
+    xmx::latency::Sleep(1400);
+    Check(gFakes.lastIntervalUs == 33334, "at 4x a 120 FPS limit holds the game's frames to 30 FPS");
+    Check(Logged("XeLL frame limit 33334 us (120 FPS on screen at 4x)"), "the log names the limit and the multiplier");
+    xmx::latency::SetFrameLimit(120, 6);
+    xmx::latency::Sleep(1400);
+    Check(gFakes.lastIntervalUs == 50000, "at 6x the game's frames are held to 20 FPS");
+    xmx::latency::SetFrameLimit(120, 1);
+    xmx::latency::Sleep(1400);
+    Check(gFakes.lastIntervalUs == 8334, "without generated frames the limit is the game's own rate");
+    const unsigned modes = gFakes.modes;
+    xmx::latency::SetFrameLimit(120, 0);
+    xmx::latency::Sleep(1400);
+    Check(gFakes.modes == modes && gFakes.lastIntervalUs == 8334, "an unknown count of presented frames counts as 1x");
+    xmx::latency::SetFrameLimit(0, 4);
+    xmx::latency::Sleep(1400);
+    Check(gFakes.lastIntervalUs == 0, "a zero limit stays off at any multiplier");
+}
+
 void DrainLine()
 {
     Fresh();
@@ -384,6 +473,11 @@ int Fakes_()
     SleepFailureCode();
     MarkerFailure();
     TraceIsBounded();
+    LimitBeforeTheContext();
+    LimitChangesOnTheNextSleep();
+    LimitFailureIsRetried();
+    LimitFollowsANewContext();
+    LimitCountsTheFramesOnScreen();
     DrainLine();
     DestroyWaitsForSleep();
     return 0;
@@ -454,6 +548,27 @@ int Runtime(const std::wstring& folder)
     std::printf("MSFS order: %s\n", msfs.c_str());
     Check(msfs.ends_with("sleeps=13 failed=0 markerFailed=0"),
         "MSFS 2024's order, one frame overlapped and every sleep on token 0, is accepted by the real XeLL");
+
+    const auto TenFrames = [](uint32_t first) {
+        const auto start = std::chrono::steady_clock::now();
+        for (uint32_t frame = first; frame < first + 10; ++frame)
+        {
+            xmx::latency::Sleep(frame);
+            for (uint32_t marker = XELL_SIMULATION_START; marker <= XELL_PRESENT_END; ++marker)
+                xmx::latency::Marker(marker, frame);
+        }
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    };
+    xmx::latency::SetFrameLimit(200, 4);
+    TenFrames(98000);
+    const double limited = TenFrames(98100);
+    std::printf("ten frames at 200 FPS on screen at 4x: %.1f ms\n", limited);
+    Check(limited > 180.0 && limited < 260.0, "the real XeLL holds the game's frames to 50 FPS");
+    xmx::latency::SetFrameLimit(0, 4);
+    TenFrames(98200);
+    const double free = TenFrames(98300);
+    std::printf("ten frames without a limit: %.1f ms\n", free);
+    Check(free < 50.0, "without a limit the real XeLL does not hold them");
     return 0;
 }
 }
