@@ -1754,7 +1754,7 @@ void PresetControlRow(MfgUnlockReShadeSnapshot& snapshot, bool statusStale)
     ImGui::BeginDisabled(legacyPreset || xmxPreset || anrPreset);
     const char* shownPreset = PresetOption(options[std::clamp(gDlssgPreset, 0, 3)]);
     if (legacyPreset) shownPreset = T("Original preset");
-    if (xmxPreset) shownPreset = "Not used with XMX";
+    if (xmxPreset) shownPreset = "Not used with XeMFG DLSS-G";
     if (anrPreset) shownPreset = "Not used with ANR FG";
     if (ImGui::BeginCombo("##dlssgpreset", shownPreset))
     {
@@ -3752,18 +3752,18 @@ void XmxControlRow()
 {
     auto& x = gXessUi;
     int selected = static_cast<int>(xess_ui::SavedModel(x));
-    const char* options[] = {"NVIDIA", "XMX (Intel XeFG)", "ANR FG"};
+    const char* options[] = {"NVIDIA", "XeMFG DLSS-G", "ANR FG"};
     ControlRow("Generation model");
     ImGui::BeginDisabled(xess_ui::ModelLocked(x));
     const bool changed = ImGui::Combo("##xmxmodel", &selected, options, IM_ARRAYSIZE(options));
     ImGui::EndDisabled();
-    HelpMarker("Which model generates the frames. NVIDIA is DLSS frame generation's own model. XMX runs Intel's "
-        "XeFG model inside DLSS frame generation, which still presents the frames and keeps Reflex. XMX needs "
-        "libxess_fg.dll and libxell.dll in an RTXMFG-XeSS folder beside MFG Unlocker.\n"
+    HelpMarker("Which model generates the frames. NVIDIA is DLSS frame generation's own model. XeMFG DLSS-G runs "
+        "Intel's XeFG model inside DLSS frame generation, which still presents the frames and keeps Reflex. XeMFG "
+        "DLSS-G needs libxess_fg.dll and libxell.dll in an RTXMFG-XeSS folder beside MFG Unlocker.\n"
         "ANR FG hands DLSS frame generation to Apex Compute's ANR FG, which then makes the generated frames. It needs "
         "the files of ANR FG's dlssg folder (nvngx_dlssg.dll and the folders beside it) in an RTXMFG-ANR folder beside "
         "MFG Unlocker, and works in D3D12 games only.\n"
-        "XMX and ANR FG stay off while XeMFG standalone is on and on RTX 30 and RTX 20 GPUs.\n"
+        "XeMFG DLSS-G and ANR FG stay off while XeMFG standalone is on and on RTX 30 and RTX 20 GPUs.\n"
         "Changing it applies after a restart.");
     const auto model = static_cast<xess_ui::Model>(selected);
     if (!changed || xess_ui::ModelRefused(x, model)) return;
@@ -3954,25 +3954,25 @@ void XmxNotes()
     if (xess_ui::XellWaiting(x))
         Note(Tone::Pending, "XeLL starts once it finds libxell.dll in RTXMFG-XeSS and the game's D3D12 device.");
     if (x.xmxRefusal == "translated_gpu")
-        Note(Tone::Bad, "XMX is off: RTX 30 and RTX 20 GPUs run frame generation through MFG Unlocker's own program, "
-            "which XMX cannot replace.");
-    else if (!x.xmxRefusal.empty()) Note(Tone::Bad, "XMX is off because XeMFG standalone is on.");
+        Note(Tone::Bad, "XeMFG DLSS-G is off: RTX 30 and RTX 20 GPUs run frame generation through MFG Unlocker's "
+            "own program, which XeMFG DLSS-G cannot replace.");
+    else if (!x.xmxRefusal.empty()) Note(Tone::Bad, "XeMFG DLSS-G is off because XeMFG standalone is on.");
     else if (x.anrSaved && x.anrRefusal == "translated_gpu")
         Note(Tone::Bad, "ANR FG is off: RTX 30 and RTX 20 GPUs run frame generation through MFG Unlocker's own "
             "program, which ANR FG cannot replace.");
     else if (x.anrSaved && x.anrRefusal == "xemfg_standalone")
         Note(Tone::Bad, "ANR FG is off because XeMFG standalone is on.");
-    else if (x.anrSaved && x.xmxSaved) Note(Tone::Bad, "ANR FG is off because XMX is on. Pick one of them.");
+    else if (x.anrSaved && x.xmxSaved) Note(Tone::Bad, "ANR FG is off because XeMFG DLSS-G is on. Pick one of them.");
     else if (xess_ui::ModelRestartPending(x)) Note(Tone::Pending, "Restart the game to switch the generation model.");
     if (xess_ui::AnrFailed(x)) Note(Tone::Bad, "ANR FG is not generating: %s", x.anrFailure.c_str());
     if (!x.xmxLatched) return;
-    if (xess_ui::XmxFailed(x)) Note(Tone::Bad, "XMX stopped generating: %s", x.xmxFailure.c_str());
+    if (xess_ui::XmxFailed(x)) Note(Tone::Bad, "XeMFG DLSS-G stopped generating: %s", x.xmxFailure.c_str());
     else if (x.xmxBypassed)
-        Note(Tone::Pending, "NVIDIA's model is generating. This game runs a DLSS frame generation copy that XMX "
-            "does not cover.");
+        Note(Tone::Pending, "NVIDIA's model is generating. This game runs a DLSS frame generation copy that "
+            "XeMFG DLSS-G does not cover.");
     if (x.xmxFramesLimit)
-        Note(Tone::Dim, "This XMX model makes %u generated frames per real frame. Higher multipliers repeat the "
-            "last one.", x.xmxFramesLimit);
+        Note(Tone::Dim, "This XeMFG DLSS-G model makes %u generated frames per real frame. Higher multipliers "
+            "repeat the last one.", x.xmxFramesLimit);
 }
 
 void AnrStatusRows()
@@ -3989,11 +3989,11 @@ void XmxStatusRows()
     const auto& x = gXessUi;
     AnrStatusRows();
     if (!x.xmxLatched) return;
-    if (xess_ui::XmxFailed(x)) StatusDetail("XMX", Tone::Bad, "Stopped", x.xmxFailure.c_str());
-    else if (x.xmxBypassed) StatusDetail("XMX", Tone::Pending, "Not used", "NVIDIA is generating");
-    else if (x.xmxGenerating) StatusRow("XMX", Tone::Good, "%s", "Generating");
-    else if (x.xmxEvaluating) StatusDetail("XMX", Tone::Pending, "Waiting", x.xmxIdle.c_str());
-    else StatusDetail("XMX", Tone::Pending, "Waiting", "DLSS frame generation is not calling the generator");
+    if (xess_ui::XmxFailed(x)) StatusDetail("XeMFG DLSS-G", Tone::Bad, "Stopped", x.xmxFailure.c_str());
+    else if (x.xmxBypassed) StatusDetail("XeMFG DLSS-G", Tone::Pending, "Not used", "NVIDIA is generating");
+    else if (x.xmxGenerating) StatusRow("XeMFG DLSS-G", Tone::Good, "%s", "Generating");
+    else if (x.xmxEvaluating) StatusDetail("XeMFG DLSS-G", Tone::Pending, "Waiting", x.xmxIdle.c_str());
+    else StatusDetail("XeMFG DLSS-G", Tone::Pending, "Waiting", "DLSS frame generation is not calling the generator");
 }
 
 void XemfgNotes()

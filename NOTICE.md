@@ -15,10 +15,11 @@ it uses the XeSS Frame Generation copy that comes with the game or OptiScaler.
 
 Intel and XeSS are trademarks of Intel Corporation or its subsidiaries.
 
-## MFG Ada Unlock, XMX generator
+## MFG Ada Unlock, XeMFG DLSS-G generator
 
-The XMX frame generation backend (`source/native/xmx/`) is derived from the XMX generator of MFGAdaUnlock-RenoDx 1.9.0
-by mavismmg (https://github.com/mavismmg/MFGAdaUnlock-RenoDx). That code is used under the MIT License:
+The XeMFG DLSS-G frame generation backend (`source/native/xmx/`) is derived from the XMX generator of
+MFGAdaUnlock-RenoDx 1.9.0 by mavismmg (https://github.com/mavismmg/MFGAdaUnlock-RenoDx), which renamed it XeMFG
+DLSS-G in 1.10.0. That code is used under the MIT License:
 
 ```
 MIT License
