@@ -8,7 +8,17 @@ dll=$build/MFGUnlocker.dll
 release_dll=$cache/release/v1.7.1/MFGUnlocker.dll
 export MFG_WINEPREFIX=${MFG_WINEPREFIX:-$cache/wineprefix}
 results=$(mktemp)
-trap 'rm -f "$results"' EXIT
+
+stop_wineserver() {
+    WINEPREFIX=$MFG_WINEPREFIX wineserver -k >/dev/null 2>&1
+    WINEPREFIX=$MFG_WINEPREFIX wineserver -w >/dev/null 2>&1
+}
+
+finish() {
+    rm -f "$results"
+    stop_wineserver
+}
+trap finish EXIT
 
 declare -A not_runnable=(
     [shipped_catalogs]="needs the Windows fonts the catalogs list (Segoe UI and others); the Wine prefix has none"
@@ -103,6 +113,12 @@ prepare_wine_prefix() {
         "$here/wine.sh" wineboot --init >/dev/null 2>&1
         "$here/wine.sh" reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\AeDebug' /v Debugger /t REG_SZ /d false /f >/dev/null 2>&1
     fi
+}
+
+keep_wineserver() {
+    stop_wineserver
+    WINEPREFIX=$MFG_WINEPREFIX wineserver -p </dev/null >/dev/null 2>&1 &
+    "$here/wine.sh" wineboot </dev/null >/dev/null 2>&1
 }
 
 prepare_release_dll() {
@@ -226,6 +242,7 @@ print_summary() {
 print_versions
 resolve_sdk_roots
 prepare_wine_prefix
+keep_wineserver
 prepare_release_dll
 
 run_project xemfg_standalone
