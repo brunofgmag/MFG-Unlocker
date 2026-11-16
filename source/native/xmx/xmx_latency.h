@@ -25,5 +25,6 @@ void Marker(uint32_t marker, uint32_t token, const char* source = "pcl") noexcep
 bool Attached() noexcept;
 bool Ready() noexcept;
 bool Sleep(uint32_t token) noexcept;
+void SetFrameLimit(uint32_t screenFps, uint32_t presentedPerFrame) noexcept;
 std::string DrainLine();
 }

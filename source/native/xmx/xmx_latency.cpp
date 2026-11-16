@@ -29,6 +29,16 @@ Counts gCounts;
 xell_result_t gLastSleepFailure = XELL_RESULT_SUCCESS;
 xell_result_t gLastMarkerFailure = XELL_RESULT_SUCCESS;
 uint32_t gLastMarkerId = 0;
+struct Limit
+{
+    uint32_t screenFps = 0;
+    uint32_t presentedPerFrame = 1;
+    uint32_t intervalUs = 0;
+};
+
+Limit gWanted;
+uint32_t gAppliedIntervalUs = 0;
+xell_result_t gLastIntervalFailure = XELL_RESULT_SUCCESS;
 constexpr uint32_t kTraceEvents = 96;
 uint32_t gTraced = 0;
 
@@ -84,27 +94,61 @@ void DestroyLocked() noexcept
     gContext = nullptr;
 }
 
+uint32_t IntervalUs(uint32_t screenFps, uint32_t presentedPerFrame) noexcept
+{
+    if (!screenFps) return 0;
+    const uint64_t numerator = 1000000ull * presentedPerFrame;
+    return static_cast<uint32_t>((numerator + screenFps - 1) / screenFps);
+}
+
+std::string LimitText(const Limit& limit)
+{
+    if (!limit.intervalUs) return "XeLL frame limit off";
+    return "XeLL frame limit " + std::to_string(limit.intervalUs) + " us (" + std::to_string(limit.screenFps)
+        + " FPS on screen at " + std::to_string(limit.presentedPerFrame) + "x)";
+}
+
+xell_result_t SetSleepModeLocked(xell_context_handle_t context, uint32_t intervalUs) noexcept
+{
+    xell_sleep_params_t mode{};
+    mode.bLowLatencyMode = 1;
+    mode.minimumIntervalUs = intervalUs;
+    return gFunctions.setSleepMode(context, &mode);
+}
+
+void ApplyWantedIntervalLocked()
+{
+    if (gAppliedIntervalUs == gWanted.intervalUs) return;
+    const xell_result_t result = SetSleepModeLocked(gContext, gWanted.intervalUs);
+    if (result != XELL_RESULT_SUCCESS)
+        return NoteFailureLocked(gLastIntervalFailure, result, LimitText(gWanted) + " failed");
+    gAppliedIntervalUs = gWanted.intervalUs;
+    gLastIntervalFailure = XELL_RESULT_SUCCESS;
+    Log(LimitText(gWanted));
+}
+
 void CreateLocked(ID3D12Device* device)
 {
     xell_context_handle_t context = nullptr;
     xell_result_t result = gFunctions.create(device, &context);
     if (result != XELL_RESULT_SUCCESS || !context)
         return Fail("create", result == XELL_RESULT_SUCCESS ? XELL_RESULT_ERROR_UNKNOWN : result);
-    xell_sleep_params_t mode{};
-    mode.bLowLatencyMode = 1;
-    result = gFunctions.setSleepMode(context, &mode);
+    result = SetSleepModeLocked(context, gWanted.intervalUs);
     if (result != XELL_RESULT_SUCCESS)
     {
         gFunctions.destroy(context);
         return Fail("sleep mode", result);
     }
     gContext = context;
+    gAppliedIntervalUs = gWanted.intervalUs;
+    gLastIntervalFailure = XELL_RESULT_SUCCESS;
     gLatestSimulation = 0;
     gLastSleepFailure = XELL_RESULT_SUCCESS;
     gLastMarkerFailure = XELL_RESULT_SUCCESS;
     gLastMarkerId = 0;
     gTraced = 0;
     Log("XeLL context created");
+    if (gAppliedIntervalUs) Log(LimitText(gWanted));
 }
 }
 
@@ -217,6 +261,7 @@ bool Sleep(uint32_t token) noexcept
                 if (TracingLocked()) TraceLocked("sleep", token, id, "dropped");
                 return false;
             }
+            ApplyWantedIntervalLocked();
             context = gContext;
             sleep = gFunctions.sleep;
         }
@@ -235,6 +280,17 @@ bool Sleep(uint32_t token) noexcept
     {
         return false;
     }
+}
+
+void SetFrameLimit(uint32_t screenFps, uint32_t presentedPerFrame) noexcept
+{
+    const uint32_t perFrame = presentedPerFrame ? presentedPerFrame : 1;
+    try
+    {
+        std::lock_guard lock(gLock);
+        gWanted = {screenFps, perFrame, IntervalUs(screenFps, perFrame)};
+    }
+    catch (...) {}
 }
 
 std::string DrainLine()

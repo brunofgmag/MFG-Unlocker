@@ -2557,14 +2557,18 @@ bool PresentationRuntimeCurrent() noexcept
     return gPresentationProviderEligible;
 }
 
+bool DynamicMfgOn() noexcept
+{
+    return gDesiredDynamicMode.load(std::memory_order_acquire)
+        || gAppliedDynamicMode.load(std::memory_order_acquire);
+}
+
 bool ReflexRuntimeCurrent() noexcept
 {
     // The manual cap is suspended for both requested and game-owned Dynamic
     // mode. Configure retains its saved value and the next proven Reflex
     // callback restores the game's own options before any later re-enable.
-    if (gDesiredDynamicMode.load(std::memory_order_acquire)
-        || gAppliedDynamicMode.load(std::memory_order_acquire)
-        || !FrameGenerationRuntimeCurrent()) return false;
+    if (DynamicMfgOn() || !FrameGenerationRuntimeCurrent()) return false;
     // Fixed D3D12 limiting uses the stable public Reflex API; it does not
     // depend on the private Dynamic/V-Sync implementation or provider 310.9.1.
     // Keep the existing Vulkan compatibility boundary intact.
@@ -2600,6 +2604,8 @@ void UpdatePresentationPolicy(const ControlConfig& control)
         ++gPresentationRuntimeEpoch;
     }
     reflex_control::Configure(control.reflexFrameLimitFps, ReflexRuntimeCurrent());
+    xmx::latency::SetFrameLimit(DynamicMfgOn() ? 0 : control.reflexFrameLimitFps,
+        gActualFramesPresented.load(std::memory_order_relaxed));
     vsync_control::Configure(control.vsyncMode);
 }
 
