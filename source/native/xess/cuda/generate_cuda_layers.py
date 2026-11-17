@@ -6,7 +6,7 @@ keeps the DXIL port (the route requires compute capability 7.5 with tensor cores
 On Windows the compiler is the pinned CUDA Toolkit 13.2 nvcc, run in the pinned MSVC toolset's environment, and the
 output is pinned by SHA-256 (nvcc output is deterministic), so a different compiler or an edited kernel fails the
 build instead of shipping silently. The Linux build (--linux, tools/linux/build.sh) compiles the same source with the
-pinned CUDA Toolkit 13.4 nvcc and its own output pin, and writes a pregenerated-style directory: the fatbin under
+pinned CUDA Toolkit 13.5 nvcc and its own output pin, and writes a pregenerated-style directory: the fatbin under
 xess_cuda/, embedded_xefg_cuda.generated.h and embedded_xefg_cuda.rc.in, whose @MFG_XEFG_CUDA_INPUTS@ placeholder is
 the directory CMake is given as MFG_XEFG_CUDA_INPUTS. Re-validate with tests/xess_cuda before updating a pin.
 """
@@ -17,14 +17,14 @@ import hashlib
 import subprocess
 
 PINNED_NVCC = "Cuda compilation tools, release 13.2, V13.2.51"
-PINNED_NVCC_LINUX = "Cuda compilation tools, release 13.4, V13.4.92"
+PINNED_NVCC_LINUX = "Cuda compilation tools, release 13.5, V13.5.37"
 RESOURCE_ID = 7300  # XeSS programs use 7000..7054, RTXMFG's XeFG shaders 7100..
 SOURCE = "xess/cuda/xefg_cuda_layers.cu"
 KERNELS = ["L_aa016078", "L_198d6bf8", "L_dcd8becf", "L_efbe3788", "L_50f0c205", "L_a3c3caa1", "L_9481d452",
            "L_06e97933", "L_3ed03daf", "L_748b0baf", "L_cb391582", "L_fc1b8a04", "L_3459485", "L_3452733",
            "L_flow16_acc17", "L_3453044"]
 PINNED_FATBIN = "2ffae52e7878ae7e374ff953b864204f079c3199dc904b2ce7ecf8b37ee130f7"
-PINNED_FATBIN_LINUX = "3815d7f7fdb1330565204fcf577190a9916b7933e324b598a371dee710620bf6"
+PINNED_FATBIN_LINUX = "66ffd6ae27714847cd7b641e2bc7aabb5540df5d0f3486a1589ed1d6bda5c61d"
 GENCODE = ("-gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 "
            "-gencode arch=compute_120,code=sm_120")
 LINUX_PLACEHOLDER = "@MFG_XEFG_CUDA_INPUTS@"
@@ -32,7 +32,7 @@ LINUX_PLACEHOLDER = "@MFG_XEFG_CUDA_INPUTS@"
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nvcc", type=Path, required=True, help="CUDA Toolkit bin/nvcc (13.2 nvcc.exe, or 13.4 nvcc with --linux)")
+    parser.add_argument("--nvcc", type=Path, required=True, help="CUDA Toolkit bin/nvcc (13.2 nvcc.exe, or 13.5 nvcc with --linux)")
     parser.add_argument("--linux", action="store_true", help="compile with the Linux nvcc and write the pregenerated-style directory")
     parser.add_argument("--vcvars", type=Path, help="VC/Auxiliary/Build/vcvars64.bat of the build's Visual Studio")
     parser.add_argument("--vcvars-ver", help="MSVC toolset version (VCToolsVersion)")

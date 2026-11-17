@@ -176,7 +176,7 @@ The Windows build above is untouched: `source/native/CMakeLists.txt` only takes 
 `MFG_PREGENERATED_INPUTS` is set, and `build.ps1` never sets it.
 
 Tools on the machine: clang-cl, lld-link, llvm-rc, llvm-mt, llvm-ml, llvm-lib, CMake 3.24 or newer, Ninja, Python 3.10
-or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. CUDA Toolkit 13.4 (`/opt/cuda/bin/nvcc`, or `MFG_NVCC`) compiles the tensor-core kernels. Wine is
+or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. CUDA Toolkit 13.5 (`/opt/cuda/bin/nvcc`, or `MFG_NVCC`) compiles the tensor-core kernels. Wine is
 needed only for `test.sh`. The script prints the versions it finds and does not fail on them.
 
 Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A mismatch stops the script and names the file:
@@ -216,7 +216,7 @@ The tensor-core kernels (`xess/cuda/xefg_cuda_layers.cu`, `xefg_cuda_params.h`) 
 with `xess/cuda/generate_cuda_layers.py --linux`, using the same `-gencode` set as the Windows build (sm_75, sm_86, sm_89,
 sm_120). The script writes the fatbin, `embedded_xefg_cuda.generated.h` and `embedded_xefg_cuda.rc.in` to
 `build/linux/xefg-cuda`, and CMake takes them from there (`MFG_XEFG_CUDA_INPUTS`) instead of from the extracted inputs.
-The generator pins the compiler (CUDA 13.4.92) and the fatbin's SHA-256 (`PINNED_FATBIN_LINUX`), next to the Windows pins
+The generator pins the compiler (CUDA 13.5.37) and the fatbin's SHA-256 (`PINNED_FATBIN_LINUX`), next to the Windows pins
 (13.2.51 and `PINNED_FATBIN`). A kernel edit changes the fatbin, so the script stops and prints the new digest; update
 the pin only after `tests/xess_cuda` passes with that fatbin. The release fatbin stays in the extracted inputs, for
 comparison, and CMake refuses to embed it: the kernels' parameter block no longer matches the release's. The Windows pin
