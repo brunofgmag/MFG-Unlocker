@@ -29,6 +29,11 @@ HUD-less color, or with one of another size, the frame is generated as before. `
 `RTXMFG-Universal.json` turns this off, and `"xmxHudDebug": 1` paints what counts as HUD magenta in the generated
 frames. Both apply live, and the status file's `xmxHudComposed` counts the frames that got the HUD.
 
+XeFG's int8 network layers run on the tensor cores, through the same CUDA kernels XeMFG uses, and any layer those
+kernels don't cover runs as a compute shader. `"xmxTensorCores": 0` in `RTXMFG-Universal.json` turns this off from the
+next launch. The log's `XMX summary 10 s` line says whether the tensor cores are in use and counts their launches and
+fallbacks.
+
 **XeLL sleep**, under Generation model, sends the game's Reflex sleep to Intel XeLL instead of NVIDIA's driver. It works
 with all three generation models (NVIDIA, XeMFG DLSS-G and ANR FG) in D3D12 games, and it needs `bin/libxell.dll` from
 the same XeSS SDK in the `RTXMFG-XeSS` folder. Under Proton it also keeps vkd3d-proton's low latency mode off, so

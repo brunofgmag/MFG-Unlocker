@@ -7,10 +7,15 @@ print_versions
 resolve_sdk_roots
 ensure_inputs
 
+nvcc=${MFG_NVCC:-/opt/cuda/bin/nvcc}
+cuda_inputs=$build/xefg-cuda
+python3 -I "$native/xess/cuda/generate_cuda_layers.py" --linux --nvcc "$nvcc" --source "$native" --output "$cuda_inputs"
+
 cmake -G Ninja -S "$native" -B "$build" \
     -DCMAKE_TOOLCHAIN_FILE="$here/toolchain.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DMFG_PREGENERATED_INPUTS="$inputs/pregenerated" \
+    -DMFG_XEFG_CUDA_INPUTS="$cuda_inputs" \
     -DSTREAMLINE_ROOT="${root[streamline]}" \
     -DIMGUI_ROOT="${root[imgui]}" \
     -DMFG_UNLOCK_XESS=ON \

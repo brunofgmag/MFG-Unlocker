@@ -40,10 +40,13 @@ std::vector<uint32_t> RunProxy(Gpu& g, const Spec& s, const Case& c, Program& pr
     };
     D3D12_UNORDERED_ACCESS_VIEW_DESC uav{}; uav.Format = Gpu::Format(c.components); uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
     uav.Texture2DArray.ArraySize = c.outSlices;
-    srvTexture(0, g.Cpu(t0));
-    if (s.family == Family::Flow) g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 1));
-    else { srvTexture(4, g.Cpu(t0 + 1)); g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 2)); }
-    for (uint32_t i = 0; i < 3; ++i) srvBuffer(1 + i, g.Cpu(t1 + i));
+    {
+        xefg_cuda::PipelineScope scope(g.token);
+        srvTexture(0, g.Cpu(t0));
+        if (s.family == Family::Flow) g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 1));
+        else { srvTexture(4, g.Cpu(t0 + 1)); g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 2)); }
+        g.WriteBuffers(t1, [&](UINT i, D3D12_CPU_DESCRIPTOR_HANDLE h) { srvBuffer(1 + i, h); });
+    }
 
     auto* record = proxy ? proxy->Interface() : g.list.Get();
     auto* bindings = mode == 1 ? g.list.Get() : record;

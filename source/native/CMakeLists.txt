@@ -179,9 +179,19 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             xess/generate_xess_programs.py ${XESS_PROGRAM_INPUTS})
         if(MFG_PREGENERATED_INPUTS)
+            set(MFG_XEFG_CUDA_INPUTS "" CACHE PATH "Directory written by generate_cuda_layers.py --linux")
+            if(NOT MFG_XEFG_CUDA_INPUTS)
+                message(FATAL_ERROR "MFG_PREGENERATED_INPUTS needs MFG_XEFG_CUDA_INPUTS, the directory written by "
+                    "generate_cuda_layers.py --linux: the release fatbin uses the old kernel parameter layout and "
+                    "must not be paired with this host code")
+            endif()
             foreach(generated embedded_xess_shaders embedded_xefg_cuda embedded_xvk_programs)
-                configure_file("${MFG_PREGENERATED_INPUTS}/${generated}.generated.h" "${MFG_GENERATED}/${generated}.generated.h" COPYONLY)
-                configure_file("${MFG_PREGENERATED_INPUTS}/${generated}.rc.in" "${MFG_GENERATED}/${generated}.rc" @ONLY)
+                set(MFG_GENERATED_FROM "${MFG_PREGENERATED_INPUTS}")
+                if(generated STREQUAL "embedded_xefg_cuda")
+                    set(MFG_GENERATED_FROM "${MFG_XEFG_CUDA_INPUTS}")
+                endif()
+                configure_file("${MFG_GENERATED_FROM}/${generated}.generated.h" "${MFG_GENERATED}/${generated}.generated.h" COPYONLY)
+                configure_file("${MFG_GENERATED_FROM}/${generated}.rc.in" "${MFG_GENERATED}/${generated}.rc" @ONLY)
             endforeach()
             configure_file("${MFG_PREGENERATED_INPUTS}/vk_input_copy_spv.h" "${MFG_GENERATED}/vk_input_copy_spv.h" COPYONLY)
             configure_file("${MFG_PREGENERATED_INPUTS}/rtxhair_vk_shaders.h" "${MFG_GENERATED}/rtxhair_vk_shaders.h" COPYONLY)
@@ -221,13 +231,16 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
         set(MFG_XESS_SOURCES
             xess/xess_mod.cpp xess/universal_hooks.cpp xess/internal_api_guards.asm
             xess/sdk_pacing.cpp xess/game_profile.cpp xess/runtime_payload.cpp xess/xess_runtime.cpp
-            xess/host_unlock.cpp xess/intel_native.cpp xess/motion_fill.cpp xess/hudless_match.cpp xess/cuda/cuda_route.cpp xess/cuda/provider_list.cpp
+            xess/host_unlock.cpp xess/intel_native.cpp xess/motion_fill.cpp xess/hudless_match.cpp xess/cuda/cuda_route.cpp xess/cuda/buffer_views.cpp xess/cuda/provider_list.cpp
             xess/d3d12_host.cpp xess/host_xell_binding.cpp
-            xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_hud_composite.cpp xmx/xmx_context.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp
+            xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_hud_composite.cpp xmx/xmx_context.cpp xmx/xmx_tensor_cores.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp
             anr/anr.cpp)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_programs.rc" xess_programs 1 3901 "${MFG_GENERATED}" packed_programs)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_shaders.rc" xess_shaders 2 3902 "${MFG_GENERATED}" packed_shaders)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xefg_cuda.rc" xefg_cuda 3 3903 "${MFG_GENERATED}" packed_cuda)
+        if(MFG_PREGENERATED_INPUTS)
+            set_source_files_properties("${packed_cuda}" PROPERTIES OBJECT_DEPENDS "${MFG_GENERATED}/xefg_cuda.lzma")
+        endif()
         set(MFG_XESS_RESOURCES "${packed_programs}" "${packed_shaders}" "${packed_cuda}")
         # vkxefg.1 (V1.6.2): XeMFG on Vulkan games. The xvk D3D12-on-Vulkan layer, its embedded SPIR-V program
         # set and the Vulkan host build as their own objects against the Vulkan 1.4 headers they need; the rest of

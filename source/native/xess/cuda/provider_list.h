@@ -86,6 +86,7 @@ private:
     void Escape(const char*) noexcept;
     std::atomic<ULONG> refs_{1};
     ID3D12GraphicsCommandList* real_{};
+    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> launch_;
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> list2_;
     ListState state_{};
     bool escaped_{}, disabled_{}, loggedBind_{};

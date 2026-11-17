@@ -23,6 +23,7 @@
 #include <Windows.h>
 #include <d3d12.h>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -49,6 +50,7 @@ struct ListState
 {
     uint8_t layer{};
     ID3D12DescriptorHeap* heap{};
+    D3D12_CPU_DESCRIPTOR_HANDLE nativeCpuStart{};
     D3D12_GPU_DESCRIPTOR_HANDLE tables[2]{};
     uint32_t tableMask{};
     uint32_t constants[12]{};
@@ -61,6 +63,9 @@ bool AdapterCapability(const LUID&, int& major, int& minor, std::string& name) n
 void SetLayerMask(uint32_t mask) noexcept;
 bool LayerEnabled(uint8_t layerId) noexcept;
 uint64_t NewPipelineToken() noexcept;
+bool UnderWine() noexcept;
+void ForceWine(std::optional<bool> answer) noexcept;
+size_t BufferViewCount() noexcept;
 struct PipelineScope
 {
     explicit PipelineScope(uint64_t) noexcept;

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.24)
+project(ProtonCudaProbe LANGUAGES CXX)
+add_executable(proton_cuda_probe proton_cuda_probe.cpp)
+target_compile_features(proton_cuda_probe PRIVATE cxx_std_20)
+target_compile_definitions(proton_cuda_probe PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+target_include_directories(proton_cuda_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../source/native)
+target_link_libraries(proton_cuda_probe PRIVATE d3d12 dxgi)
+set_target_properties(proton_cuda_probe PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

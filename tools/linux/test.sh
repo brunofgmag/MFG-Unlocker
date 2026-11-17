@@ -41,13 +41,14 @@ declare -A not_runnable=(
     [dlss5-d3d11-depth-pass]="needs WARP; Wine's D3D11 falls back to a hardware device, where the depth pass's conversion is refused"
 )
 
-gpu_reason="needs MFG_TEST_GPU=1 (creates a GPU device)"
+gpu_disabled_reason="needs MFG_TEST_GPU=1 (creates a GPU device)"
+gpu_reason=$gpu_disabled_reason
 
 gpu_tests=(BlackwellAdapterProbe NvapiResolveTests XmxLatencyRuntimeTests XmxRuntimeDeviceTests
     XmxGeneratorReuseTests XmxGeneratorFramesTests XmxGeneratorRefusedTests XmxGeneratorRefusedAlternatingTests
     XmxGeneratorFallbackTests XmxGeneratorMemoryDeviceTests XmxGeneratorCopyMismatchTests
     XmxGeneratorHudCompositeTests XmxGeneratorHudExecuteTests XmxGeneratorHudDeviceTests XmxGeneratorHudGeneratedTests
-    XmxGeneratorHudUnpreparedTests)
+    XmxGeneratorHudUnpreparedTests XmxGeneratorTensorCoresTests)
 
 gpu_source_level_cases=(optiscaler-streamline-device)
 
@@ -81,7 +82,15 @@ record() {
 }
 
 gpu_gated() {
-    [ "${MFG_TEST_GPU:-}" != 1 ]
+    local status
+    gpu_reason=$gpu_disabled_reason
+    [ "${MFG_TEST_GPU:-}" = 1 ] || return 0
+    mkdir -p "$tests_build"
+    "$here/proton_cuda.sh" game-closed >"$tests_build/game_check.log" 2>&1
+    status=$?
+    [ "$status" = 3 ] || return 1
+    gpu_reason="a game is open; see $tests_build/game_check.log"
+    return 0
 }
 
 gpu_exclusion() {
@@ -198,7 +207,7 @@ run_regression_case() {
 
 run_source_level_case() {
     local case_name=$1 output=$tests_build/release_regression/results
-    if gpu_gated && is_gpu_source_level_case "$case_name"; then
+    if is_gpu_source_level_case "$case_name" && gpu_gated; then
         record release_regression "$case_name" "not runnable" "$gpu_reason"
         return
     fi
@@ -233,6 +242,22 @@ run_regression_project() {
     done
 }
 
+proton_results=${MFG_PROTON_CUDA_OUT:-$repository/build/proton-cuda}/route/results.txt
+
+run_proton_project() {
+    local log=$tests_build/proton_route.log status
+    mkdir -p "$tests_build"
+    rm -f "$proton_results"
+    "$here/proton_cuda.sh" route >"$log" 2>&1
+    status=$?
+    [ -f "$proton_results" ] && cat "$proton_results" >>"$results"
+    if [ "$status" = 3 ]; then
+        record xess_cuda_proton "(project)" "not runnable" "a game is open; see $log"
+    elif [ ! -f "$proton_results" ]; then
+        record xess_cuda_proton "(project)" failed "proton_cuda.sh route stopped before any test ran (exit $status); see $log"
+    fi
+}
+
 print_summary() {
     printf '\n%-20s %-36s %-13s %s\n' project test result detail
     awk -F'|' '{ printf "%-20s %-36s %-13s %s\n", $1, $2, $3, $4 }' "$results"
@@ -258,6 +283,7 @@ run_project xmx -DSTREAMLINE_ROOT="${root[streamline]}" -DXESS_SDK_ROOT="${root[
 run_project anr -DSTREAMLINE_ROOT="${root[streamline]}"
 run_project dlss5 -DSTREAMLINE_ROOT="${root[streamline]}" -DDLSS5_CANDIDATE_DLL="$dll"
 run_regression_project
+[ "${MFG_TEST_PROTON:-}" = 1 ] && run_proton_project
 
 print_summary
 ! grep -q '|failed|' "$results"
