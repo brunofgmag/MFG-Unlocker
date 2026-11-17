@@ -232,7 +232,7 @@ int wmain(int argc,wchar_t** argv){
     rewriteHud(",\"xmxTensorCores\":0");
     Check(Has(Wait(status,"xmxTensorCores","false"),"xmxTensorCores","false"),"xmxTensorCores 0 is read from the saved file");
     rewriteHud(",\"xmxTensorCores\":1");
-    Check(Has(Wait(status,"xmxTensorCores","true"),"xmxTensorCores","true"),"xmxTensorCores 1 turns the route back on");
+    Check(Has(Wait(status,"xmxTensorCores","true"),"xmxTensorCores","true"),"xmxTensorCores 1 is read from the saved file");
     Check(LogHas("XeMFG DLSS-G HUD debug off"),"turning the debug paint off is logged");
     if(lockedMode){
         Check(Read(status)==lockedContent,"candidate does not overwrite the game's locked snapshot in place");

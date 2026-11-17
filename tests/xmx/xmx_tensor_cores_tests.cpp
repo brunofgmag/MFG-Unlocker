@@ -540,6 +540,35 @@ int Restart()
     return 0;
 }
 
+int InEffectBeforeContext()
+{
+    Check(xmx::tensor_cores::InEffect(), "before any setting the route is in effect by default");
+    xmx::tensor_cores::Configure(false);
+    Check(!xmx::tensor_cores::InEffect(), "before any context it follows the configured off");
+    xmx::tensor_cores::Configure(true);
+    Check(xmx::tensor_cores::InEffect(), "before any context it follows the configured on");
+    return 0;
+}
+
+int InEffectLatchedOn()
+{
+    xmx::tensor_cores::Configure(true);
+    gState = xefg_cuda::State::Active;
+    CreateOn(kDeviceA);
+    xmx::tensor_cores::Configure(false);
+    Check(xmx::tensor_cores::InEffect(), "a route latched on stays in effect after the setting is turned off");
+    return 0;
+}
+
+int InEffectLatchedOff()
+{
+    xmx::tensor_cores::Configure(false);
+    CreateOn(kDeviceA);
+    xmx::tensor_cores::Configure(true);
+    Check(!xmx::tensor_cores::InEffect(), "a route latched off stays out of effect after the setting is turned on");
+    return 0;
+}
+
 int Summary()
 {
     using xmx::tensor_cores::Setting;
@@ -619,6 +648,14 @@ PipelineScope::~PipelineScope()
     gToken = previous_;
 }
 
+DeclinedScope::DeclinedScope() noexcept : previous_(false)
+{
+}
+
+DeclinedScope::~DeclinedScope()
+{
+}
+
 Status Snapshot() noexcept
 {
     Status status = gStatus;
@@ -693,6 +730,9 @@ int wmain(int argc, wchar_t** argv)
     else if (mode == L"off") code = Off();
     else if (mode == L"restart") code = Restart();
     else if (mode == L"summary") code = Summary();
+    else if (mode == L"in_effect_before_context") code = InEffectBeforeContext();
+    else if (mode == L"in_effect_latched_on") code = InEffectLatchedOn();
+    else if (mode == L"in_effect_latched_off") code = InEffectLatchedOff();
     else std::printf("FAIL unknown mode\n");
     std::printf("XMX_TENSOR_CORES checks=%u failures=%u\n", gChecks, gFailures);
     return gFailures || code ? 1 : 0;

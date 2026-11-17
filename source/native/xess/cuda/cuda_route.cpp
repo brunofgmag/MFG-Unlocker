@@ -204,12 +204,14 @@ void Log(const char* stage, const std::string& fields) noexcept
 }
 
 // Recognized pipeline states: open addressing on the pointer (inserted under gMutex, read lock-free).
-constexpr size_t kSlots = 512;
+constexpr unsigned kSlotBits = 10;
+constexpr size_t kSlots = size_t(1) << kSlotBits;
 std::array<std::atomic<void*>, kSlots> gKeys{};
 std::array<std::atomic<uint8_t>, kSlots> gValues{};
 struct HeldLayer { ID3D12PipelineState* state; uint64_t token; uint8_t layer; };
 std::vector<HeldLayer> gHeld;
 thread_local uint64_t tPipelineToken{};
+thread_local bool tDeclined{};
 std::atomic<uint64_t> gNextPipelineToken{1};
 std::atomic<uint64_t> gPipelineGeneration{};
 std::atomic<uint32_t> gLayerMask{(1u << std::size(kLayers)) - 1};
@@ -224,7 +226,7 @@ std::atomic<int> gWineForced{-1};
 
 size_t Home(const void* key) noexcept
 {
-    return size_t(((reinterpret_cast<uintptr_t>(key) >> 4) * 0x9E3779B97F4A7C15ull) >> 55) & (kSlots - 1);
+    return size_t(((reinterpret_cast<uintptr_t>(key) >> 4) * 0x9E3779B97F4A7C15ull) >> (64 - kSlotBits)) & (kSlots - 1);
 }
 uint8_t Lookup(const void* key) noexcept
 {
@@ -647,7 +649,7 @@ bool Launch(ID3D12GraphicsCommandList* list, const ListState& r, UINT x, UINT y,
 void STDMETHODCALLTYPE HookDispatch(ID3D12GraphicsCommandList* self, UINT x, UINT y, UINT z)
 {
     const auto& r = tRecording;
-    if (r.list == self && r.layer && r.table == *reinterpret_cast<void***>(self) && gActive.load(std::memory_order_acquire))
+    if (!tDeclined && r.list == self && r.layer && r.table == *reinterpret_cast<void***>(self) && gActive.load(std::memory_order_acquire))
         if (const ListTable* table = FindTable(r.table); table && table->complete.load(std::memory_order_acquire)
             && LayerEnabled(r.layer) && Launch(self, r, x, y, z))
             return;
@@ -1547,6 +1549,8 @@ size_t BufferViewCount() noexcept { return gViews.Size(); }
 void ForceWine(std::optional<bool> answer) noexcept { gWineForced.store(answer ? int(*answer) : -1, std::memory_order_relaxed); }
 PipelineScope::PipelineScope(uint64_t token) noexcept : previous_(tPipelineToken) { tPipelineToken = token; }
 PipelineScope::~PipelineScope() { tPipelineToken = previous_; }
+DeclinedScope::DeclinedScope() noexcept : previous_(tDeclined) { tDeclined = true; }
+DeclinedScope::~DeclinedScope() { tDeclined = previous_; }
 void ForgetPipelines(uint64_t token) noexcept
 {
     if (!token) return;

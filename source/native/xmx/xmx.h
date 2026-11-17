@@ -48,6 +48,7 @@ bool ConfigureStandIn(bool on) noexcept;
 size_t StandInLive() noexcept;
 bool ConfigureHud(bool on, bool debug) noexcept;
 void ConfigureTensorCores(bool on) noexcept;
+bool TensorCoresInEffect() noexcept;
 uint64_t HudComposed() noexcept;
 void RecordTagStates(const sl::ResourceTag* tags, uint32_t count) noexcept;
 Status ReadStatus(bool driverGenerating) noexcept;

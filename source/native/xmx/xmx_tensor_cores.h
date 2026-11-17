@@ -13,6 +13,7 @@ using context::InitParams;
 enum class Setting { Undecided, On, Off };
 
 void Configure(bool on) noexcept;
+bool InEffect() noexcept;
 bool Create(HMODULE fg, const Rvas& rvas, ID3D12Device* device, void*& handle, std::string& failure) noexcept;
 int Initialize(HMODULE fg, const Rvas& rvas, void* handle, InitParams& init) noexcept;
 int Execute(HMODULE fg, const Rvas& rvas, void* handle, ID3D12GraphicsCommandList* list,

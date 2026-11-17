@@ -452,6 +452,11 @@ void ConfigureTensorCores(bool on) noexcept
     tensor_cores::Configure(on);
 }
 
+bool TensorCoresInEffect() noexcept
+{
+    return tensor_cores::InEffect();
+}
+
 uint64_t HudComposed() noexcept
 {
     return status::hudComposed.load(std::memory_order_relaxed);

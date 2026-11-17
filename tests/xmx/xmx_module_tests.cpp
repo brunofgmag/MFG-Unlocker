@@ -25,6 +25,7 @@ bool gPassthroughAnswer = true;
 unsigned gPassthroughCalls = 0;
 unsigned gTensorCoresConfigured = 0;
 bool gTensorCoresValue = false;
+bool gTensorCoresInEffect = false;
 unsigned gLimitLogs = 0;
 bool gTranslatedGpu = false;
 unsigned gDeviceQueries = 0;
@@ -158,6 +159,10 @@ void TensorCoresKey()
     Check(gTensorCoresConfigured == 1 && gTensorCoresValue, "the tensor-core key reaches the tensor-core module as on");
     xmx::ConfigureTensorCores(false);
     Check(gTensorCoresConfigured == 2 && !gTensorCoresValue, "and as off");
+    gTensorCoresInEffect = true;
+    Check(xmx::TensorCoresInEffect(), "the value in effect is the tensor-core module's, not the configured one");
+    gTensorCoresInEffect = false;
+    Check(!xmx::TensorCoresInEffect(), "and follows it when it changes");
 }
 
 void RouteBeforeLatch()
@@ -628,6 +633,11 @@ void Configure(bool on) noexcept
 {
     ++gTensorCoresConfigured;
     gTensorCoresValue = on;
+}
+
+bool InEffect() noexcept
+{
+    return gTensorCoresInEffect;
 }
 }
 

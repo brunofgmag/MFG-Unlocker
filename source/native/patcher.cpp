@@ -3365,7 +3365,7 @@ bool WriteBridgeStatus(const ControlConfig& control, DWORD pid, bool disk = true
         control.xmxXell ? "true" : "false", xmx::latency::Ready() ? "true" : "false",
         control.xmxStandIn ? "true" : "false", static_cast<uint32_t>(xmx::StandInLive()),
         control.xmxHud ? "true" : "false", control.xmxHudDebug ? "true" : "false",
-        static_cast<unsigned long long>(xmx::HudComposed()), control.xmxTensorCores ? "true" : "false",
+        static_cast<unsigned long long>(xmx::HudComposed()), xmx::TensorCoresInEffect() ? "true" : "false",
         VsyncRuntimeCurrent() && DynamicMfgSupported() ? "true" : "false",
         vsync.available ? "true" : "false", vsync.overrideApplied ? "true" : "false",
         vsync.matched ? "true" : "false", vsync.originalInterval, vsync.submittedInterval,

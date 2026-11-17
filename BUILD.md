@@ -234,7 +234,9 @@ the AtmosphereMod and RenoDX add-ons are copied from the Witcher 3 and MSFS 2024
 Intel's layer programs are not in the release DLL, so the first run dumps them: it starts the XeSS SDK's frame generation
 sample under Proton for 90 seconds with `VKD3D_SHADER_DUMP_PATH` set, and keeps the programs
 the route recognizes in `~/.cache/mfg-unlocker/intel-programs`. The cases write their output to
-`build/proton-cuda/route/tests/<case>/output.txt`.
+`build/proton-cuda/route/tests/<case>/output.txt`. The route also runs `XmxTensorCoreContextsTests` from `tests/xmx`,
+which `test.sh` builds before it: 16 XeMFG DLSS-G contexts at different sizes, and the sixteenth must still launch on the
+tensor cores. Each XeFG context brings 28 layer pipelines, and the route holds up to 512.
 
 Under Proton, vkd3d-proton gives no CUDA object for a buffer view. Under Wine, the route therefore records the GPU
 address of each buffer view XeFG writes, and passes weights, scale and bias to the kernels as addresses. Textures and
