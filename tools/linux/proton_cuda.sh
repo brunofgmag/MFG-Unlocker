@@ -389,6 +389,16 @@ run_route_tests() {
     fi
 }
 
+run_xmx_contexts_test() {
+    local dir=$1 name=XmxTensorCoreContextsTests exe=$tests_build/xmx/XmxTensorCoreContextsTests.exe
+    [[ $name =~ ${MFG_ROUTE_FILTER:-.} ]] || return 0
+    if [ ! -f "$exe" ]; then
+        printf 'xess_cuda_proton|%s|failed|%s is not built; tools/linux/test.sh builds tests/xmx\n' "$name" "$exe" >>"$dir/results.txt"
+        return 0
+    fi
+    ( export MFG_TEST_GPU=1; run_route_test "$dir" "$name" "$exe" "$xess/bin" "$build/MFGUnlocker.dll" )
+}
+
 run_route() {
     local mode=$1 dir=$out/$1 status
     if [ "$mode" = intel-programs ]; then dump_intel_programs; return $?; fi
@@ -401,6 +411,7 @@ run_route() {
     printf 'mode %s: fatbin %s\n' "$mode" "$(sha256sum "$dir/inputs/xefg_cuda_layers.fatbin" | cut -d' ' -f1)"
     run_route_tests "$dir"
     status=$?
+    [ "$status" = 3 ] || run_xmx_contexts_test "$dir" || status=$?
     printf '=== %s: results ===\n' "$mode"
     cat "$dir/results.txt"
     return $status

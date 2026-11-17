@@ -75,6 +75,15 @@ struct PipelineScope
 private:
     uint64_t previous_;
 };
+struct DeclinedScope
+{
+    DeclinedScope() noexcept;
+    ~DeclinedScope();
+    DeclinedScope(const DeclinedScope&) = delete;
+    DeclinedScope& operator=(const DeclinedScope&) = delete;
+private:
+    bool previous_;
+};
 void ForgetPipelines(uint64_t token) noexcept;
 void ReportVulkan(State, int major, int minor, uint32_t layers, const char* reason) noexcept;
 void CountVulkan(uint64_t launches, uint64_t fallbacks) noexcept;

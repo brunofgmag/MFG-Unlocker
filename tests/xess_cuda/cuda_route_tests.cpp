@@ -622,6 +622,28 @@ bool HookPathUnderWrapper(Gpu& g, Program& program)
         faulted ? "route FAULTED" : "no fault");
     return ok;
 }
+bool DeclinedUnderProxy(Gpu& g, Program& program)
+{
+    struct Shape { const char* name; uint32_t x, y, z; };
+    const Spec& s = kSpecs[0];
+    bool all = true;
+    for (const Shape shape : {Shape{"no groups in x", 0, 1, 1}, Shape{"no groups in y", 1, 0, 1}, Shape{"two groups in z", 1, 1, 2}})
+    {
+        Case c = Make(s, 37, 29, 5, true, 0);
+        c.groupsX = shape.x ? c.groupsX : 0;
+        c.groupsY = shape.y ? c.groupsY : 0;
+        c.groupsZ = shape.z;
+        const auto before = xefg_cuda::Snapshot();
+        Run(g, s, c, program, program.routed.Get(), false);
+        const auto after = xefg_cuda::Snapshot();
+        const uint64_t launches = after.launches - before.launches, fallbacks = after.fallbacks - before.fallbacks;
+        const bool ok = g.proxy && launches == 0 && fallbacks == 1;
+        all = all && ok;
+        printf("%s a Dispatch with %s that the provider list declines under the wrapper counts one fallback: launches +%llu, fallbacks +%llu\n",
+            ok ? "PASS" : "FAIL", shape.name, (unsigned long long)launches, (unsigned long long)fallbacks);
+    }
+    return all;
+}
 }
 
 int main(int argc, char** argv)
@@ -809,6 +831,8 @@ int main(int argc, char** argv)
         {
             const bool ok = HookPathUnderWrapper(g, programs.at(kSpecs[0].name));
             ++cases; failures += !ok;
+            const bool declinedOk = DeclinedUnderProxy(g, programs.at(kSpecs[0].name));
+            ++cases; failures += !declinedOk;
         }
         struct Size { uint32_t w, h; };
         for (const auto& s : kSpecs)

@@ -37,6 +37,17 @@ if(EXISTS "${XESS_SDK_ROOT}/inc/xess_fg/xefg_swapchain_d3d12.h" AND EXISTS "${ST
     target_link_libraries(XmxRuntimeTests PRIVATE d3d12 dxgi bcrypt)
     target_link_options(XmxRuntimeTests PRIVATE /FORCE:UNRESOLVED)
     list(APPEND XMX_TARGETS XmxRuntimeTests)
+    add_executable(XmxTensorCoreContextsTests xmx_tensor_core_contexts_tests.cpp "${NATIVE}/xmx/xmx_context.cpp"
+        "${NATIVE}/xmx/xmx_tensor_cores.cpp" "${NATIVE}/xess/xess_mod.cpp" "${NATIVE}/xess/host_unlock.cpp"
+        "${NATIVE}/xess/runtime_payload.cpp" "${NATIVE}/xess/xess_runtime.cpp" "${NATIVE}/embedded_payload.cpp"
+        "${NATIVE}/third_party/lzma/LzmaDec.c" "${NATIVE}/xess/cuda/cuda_route.cpp"
+        "${NATIVE}/xess/cuda/buffer_views.cpp" "${NATIVE}/xess/cuda/provider_list.cpp")
+    target_include_directories(XmxTensorCoreContextsTests PRIVATE "${MFG_GENERATED_DIR}" "${STREAMLINE_ROOT}/include"
+        "${STREAMLINE_ROOT}/external/ngx-sdk/include" "${XESS_SDK_ROOT}/inc/xess_fg" "${XESS_SDK_ROOT}/inc/xell")
+    target_compile_definitions(XmxTensorCoreContextsTests PRIVATE MFG_UNLOCK_XESS=1)
+    target_link_libraries(XmxTensorCoreContextsTests PRIVATE d3d12 dxgi bcrypt)
+    target_link_options(XmxTensorCoreContextsTests PRIVATE /FORCE:UNRESOLVED)
+    list(APPEND XMX_TARGETS XmxTensorCoreContextsTests)
     add_executable(XmxModuleTests xmx_module_tests.cpp "${NATIVE}/xmx/xmx.cpp" "${NATIVE}/xmx/xmx_latency.cpp"
         "${NATIVE}/xmx/low_latency_hold.cpp")
     target_include_directories(XmxModuleTests PRIVATE "${STREAMLINE_ROOT}/include"
@@ -73,7 +84,7 @@ add_test(NAME XmxStandInTests COMMAND XmxStandInTests)
 add_test(NAME XmxLowLatencyRulesTests COMMAND XmxLowLatencyRulesTests)
 add_test(NAME XmxUiStateTests COMMAND XmxUiStateTests)
 add_test(NAME XmxBufferViewsTests COMMAND XmxBufferViewsTests)
-foreach(mode inactive active refused wrapped proxy_wrapped proxy_plain proxy_not_under_wine proxy_refused off restart summary)
+foreach(mode inactive active refused wrapped proxy_wrapped proxy_plain proxy_not_under_wine proxy_refused off restart summary in_effect_before_context in_effect_latched_on in_effect_latched_off)
     add_test(NAME XmxTensorCores_${mode} COMMAND XmxTensorCoresTests ${mode})
 endforeach()
 foreach(mode not-available forwarding install-with-hold-on second-device)

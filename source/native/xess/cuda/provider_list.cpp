@@ -154,8 +154,14 @@ void STDMETHODCALLTYPE ProviderList::DrawIndexedInstanced(UINT IndexCountPerInst
 void STDMETHODCALLTYPE ProviderList::Dispatch(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ)
 {
     if (!real_) return;
-    if (state_.layer && !escaped_ && LaunchOn(launch_.Get(), state_, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) return;
+    if (state_.layer && !escaped_)
+    {
+        if (LaunchOn(launch_.Get(), state_, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) return;
+        DeclinedScope declined;
         real_->Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+        return;
+    }
+    real_->Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 }
 
 void STDMETHODCALLTYPE ProviderList::CopyBufferRegion(ID3D12Resource *pDstBuffer, UINT64 DstOffset, ID3D12Resource *pSrcBuffer, UINT64 SrcOffset, UINT64 NumBytes)

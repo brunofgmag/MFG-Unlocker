@@ -76,6 +76,13 @@ void Configure(bool on) noexcept
     catch (...) {}
 }
 
+bool InEffect() noexcept
+{
+    const auto setting = gSetting.load(std::memory_order_acquire);
+    if (setting == Setting::Undecided) return gWanted.load(std::memory_order_relaxed);
+    return setting == Setting::On;
+}
+
 bool Create(HMODULE fg, const Rvas& rvas, ID3D12Device* device, void*& handle, std::string& failure) noexcept
 {
     if (Decide() == Setting::Off) return context::Create(fg, rvas, device, handle, failure);
