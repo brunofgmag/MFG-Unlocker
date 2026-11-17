@@ -238,6 +238,18 @@ the route recognizes in `~/.cache/mfg-unlocker/intel-programs`. The cases write 
 which `test.sh` builds before it: 16 XeMFG DLSS-G contexts at different sizes, and the sixteenth must still launch on the
 tensor cores. Each XeFG context brings 28 layer pipelines, and the route holds up to 512.
 
+`tools/linux/proton_cuda.sh profile` measures where the GPU time of one XeFG `execute` goes. It runs `XmxXefgProfile` from
+`tests/xmx` under Proton, drives XeFG at MSFS 2024's shapes (3840x2160 output, 2560x1440 render, 3 generated frames, HUD
+composite on, 300 pairs after 30 of warmup) and prints a GPU timestamp for every dispatch, per generated frame. Arguments
+go straight to the benchmark: `--output WxH`, `--render WxH`, `--frames N`, `--pairs N`, `--warmup N` and `--no-hud`.
+`--dxil` keeps the tensor-core route off, so the same run measures the DXIL port, with totals only. `--declined` installs
+the route but declines every layer, which gives the DXIL port dispatch by dispatch. `--content zero|scene|noise` chooses
+what the input textures hold: zeros (the default), a flight-like frame pair with moving objects, or random texels.
+The run also names the program behind every non-layer pass: it hooks pipeline creation, dumps each compute program under
+`build/proton-cuda/profile/programs/` and prints `pass <k> -> <file>` for the ones in the known program folders.
+`profile --reshade` runs the same benchmark with ReShade's `dxgi.dll` and the route tests' add-ons beside it, so the device
+is wrapped as in the game. It needs the same condition as the GPU tests: no game or simulator using the GPU.
+
 Under Proton, vkd3d-proton gives no CUDA object for a buffer view. Under Wine, the route therefore records the GPU
 address of each buffer view XeFG writes, and passes weights, scale and bias to the kernels as addresses. Textures and
 surfaces stay CUDA objects. On Windows nothing changes.

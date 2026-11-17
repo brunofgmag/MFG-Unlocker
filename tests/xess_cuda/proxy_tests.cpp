@@ -6,6 +6,57 @@
 #include "proxy_recording.h"
 #include <set>
 
+struct ProbeLog { std::vector<std::pair<ID3D12GraphicsCommandList*, xefg_cuda::DispatchSample>> samples; };
+
+void RecordProbe(ID3D12GraphicsCommandList* recordedOn, const xefg_cuda::DispatchSample& sample, void* context) noexcept
+{
+    static_cast<ProbeLog*>(context)->samples.emplace_back(recordedOn, sample);
+}
+
+std::vector<uint32_t> ProbeRun(Gpu& g, const Spec& spec, const Case& c, Program& p, xefg_cuda::ProviderList& proxy, ID3D12PipelineState* pso, int mode)
+{
+    if (!proxy.Bind(g.list.Get())) throw std::runtime_error("probe Bind refused");
+    auto output = RunProxy(g, spec, c, p, pso, &proxy, mode);
+    proxy.Unbind();
+    return output;
+}
+
+size_t ProbeFailures(Gpu& g, const Spec& spec, const Case& c, Program& p, xefg_cuda::ProviderList& proxy, const std::vector<uint32_t>& reference)
+{
+    ProbeLog log; const xefg_cuda::DispatchProbe probe{RecordProbe, &log};
+    size_t failures = 0;
+    auto expect = [&](bool ok, const char* what) { if (!ok) { ++failures; std::printf("FAIL probe %s %s\n", c.label.c_str(), what); } };
+    auto matches = [&](const std::vector<uint32_t>& output, const char* what) {
+        size_t poison{}; expect(!Mismatches(reference, output, poison), what);
+    };
+    const auto layer = xefg_cuda::LayerOf(p.routed.Get());
+    xefg_cuda::SetDispatchProbe(&probe);
+    matches(ProbeRun(g, spec, c, p, proxy, p.routed.Get(), 0), "launched output");
+    matches(ProbeRun(g, spec, c, p, proxy, p.routed.Get(), 1), "stale output");
+    matches(ProbeRun(g, spec, c, p, proxy, p.reference.Get(), 0), "reference output");
+    xefg_cuda::SetDispatchProbe(nullptr);
+    expect(log.samples.size() == 3, "three samples while the probe is set");
+    if (log.samples.size() == 3) {
+        const auto& [launchedList, launched] = log.samples[0];
+        expect(launched.launched && launched.layer == layer && layer != 0, "launched sample flags");
+        expect(launched.pipeline == p.routed.Get(), "launched sample pipeline");
+        expect(launched.x == c.groupsX && launched.y == c.groupsY && launched.z == c.groupsZ, "launched sample groups");
+        expect(launchedList == g.list.Get(), "launched sample list");
+        const auto& [staleList, stale] = log.samples[1];
+        expect(!stale.launched && stale.layer == layer, "stale sample flags");
+        expect(stale.pipeline == p.routed.Get(), "stale sample pipeline");
+        expect(stale.x == c.groupsX && stale.y == c.groupsY && stale.z == c.groupsZ, "stale sample groups");
+        expect(staleList == g.list.Get(), "stale sample list");
+        const auto& [referenceList, plain] = log.samples[2];
+        expect(!plain.launched && plain.layer == 0, "reference sample flags");
+        expect(plain.pipeline == p.reference.Get(), "reference sample pipeline");
+        expect(referenceList == g.list.Get(), "reference sample list");
+    }
+    matches(ProbeRun(g, spec, c, p, proxy, p.routed.Get(), 0), "unprobed output");
+    expect(log.samples.size() == 3, "no sample after the probe is cleared");
+    return failures;
+}
+
 int main(int argc, char** argv)
 {
     try {
@@ -93,6 +144,7 @@ int main(int argc, char** argv)
                     if (test != "equivalence" && cases) break;
                     const auto c = Make(spec, size.first, size.second, 99, realistic != 0, mode);
                     const auto reference = RunProxy(g, spec, c, p, p.reference.Get(), nullptr, 0);
+                    if (test == "probe") { failures += ProbeFailures(g, spec, c, p, proxy, reference); ++cases; continue; }
                     if (!proxy.Bind(g.list.Get())) throw std::runtime_error("proxy Bind refused");
                     if (test == "stale") {
                         RunProxy(g, spec, c, p, p.routed.Get(), &proxy, 0);
