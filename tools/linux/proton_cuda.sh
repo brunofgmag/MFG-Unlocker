@@ -2,6 +2,7 @@
 set -uo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/environment.sh"
+[ -n "${MFG_HEADLESS_ACTIVE:-}" ] || [ "${1:-}" = game-closed ] || exec "$here/headless.sh" "$here/proton_cuda.sh" "$@"
 
 nvcc=${MFG_NVCC:-/opt/cuda/bin/nvcc}
 proton=${MFG_PROTON:-$HOME/.steam/steam/compatibilitytools.d/Proton-FS2024/proton}

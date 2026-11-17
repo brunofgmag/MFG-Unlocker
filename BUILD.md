@@ -217,6 +217,13 @@ or NVAPI calls into the installed driver) do not run by default and show as not 
 them, and only with no game or simulator using the GPU. A release_regression case that fails with the built DLL is run
 again with the unmodified v1.7.1 DLL; if that fails too, the case is not runnable here. `build/linux-tests` holds the logs.
 
+The tests that need no GPU and the release_regression cases run `MFG_TEST_JOBS` at a time (8 by default), and the table
+still lists the tests in their defined order. The GPU tests run one at a time after them, and the `MFG_TEST_PROTON=1`
+project after everything else: GPU tests run side by side, or beside the Proton cases, fail to create a Vulkan device or
+get too little video memory for XeFG, and pass on their own. `test.sh` and `proton_cuda.sh` run themselves inside
+`tools/linux/headless.sh`, a virtual KWin session with its own Xwayland, so the windows and consoles that Wine and Proton
+open never reach the desktop or take its focus. `MFG_HEADLESS=0` runs them on the desktop instead.
+
 `MFG_TEST_PROTON=1` adds the `tests/xess_cuda` cases, run under Proton-FS2024 (the Proton that MSFS 2024 uses) instead of
 plain Wine, as project `xess_cuda_proton`. It is separate from `MFG_TEST_GPU` and needs the same condition: no game or
 simulator using the GPU. `tools/linux/proton_cuda.sh route` does the work. It compiles the kernels from source, builds
@@ -225,7 +232,7 @@ prefix at `~/.cache/mfg-unlocker/proton-cuda-prefix`. The script
 refuses to start, and `test.sh` records the project as not runnable, when any process maps a game. ReShade 6.8.0.2155 and
 the AtmosphereMod and RenoDX add-ons are copied from the Witcher 3 and MSFS 2024 installs and checked by SHA-256 first.
 Intel's layer programs are not in the release DLL, so the first run dumps them: it starts the XeSS SDK's frame generation
-sample under Proton for 90 seconds with `VKD3D_SHADER_DUMP_PATH` set, which opens a window briefly, and keeps the programs
+sample under Proton for 90 seconds with `VKD3D_SHADER_DUMP_PATH` set, and keeps the programs
 the route recognizes in `~/.cache/mfg-unlocker/intel-programs`. The cases write their output to
 `build/proton-cuda/route/tests/<case>/output.txt`.
 
