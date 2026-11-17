@@ -50,6 +50,7 @@ struct Copies
     FrameData data{};
     bool valid{};
     policy::Idle refusal{policy::Idle::None};
+    FrameExtras extras{};
 };
 
 struct PendingTiming
@@ -88,6 +89,8 @@ struct Retired
 struct State
 {
     Pair pair;
+    std::atomic<const Model*> model{nullptr};
+    ModelKind modelAsked{ModelKind::eXefg};
     ComPtr<ID3D12Device> device;
     void* context{};
     policy::ContextShape shape{};
@@ -132,6 +135,18 @@ State& Get()
 {
     static auto* state = new State;
     return *state;
+}
+
+std::atomic<ModelKind>& WantedModel()
+{
+    static auto* wanted = new std::atomic<ModelKind>{ModelKind::eXefg};
+    return *wanted;
+}
+
+std::atomic<bool>& ModelRestartLogged()
+{
+    static auto* logged = new std::atomic<bool>{false};
+    return *logged;
 }
 
 std::mutex& Lock()
@@ -402,17 +417,55 @@ bool LocalMemory(LUID luid, DXGI_QUERY_VIDEO_MEMORY_INFO& info)
     return adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info));
 }
 
+bool XefgCreate(const Pair& pair, ID3D12Device* device, void*& handle, std::string& failure) noexcept
+{
+    return tensor_cores::Create(pair.fg, *pair.rvas, device, handle, failure);
+}
+
+int XefgInitialize(const Pair& pair, void* handle, InitParams& init) noexcept
+{
+    return tensor_cores::Initialize(pair.fg, *pair.rvas, handle, init);
+}
+
+int XefgExecute(const Pair& pair, void* handle, ID3D12GraphicsCommandList* list, ExecuteParams& execute,
+    const FrameExtras&) noexcept
+{
+    return tensor_cores::Execute(pair.fg, *pair.rvas, handle, list, execute);
+}
+
+const char* WantedModelName(ModelKind kind)
+{
+    return kind == ModelKind::eFsr ? "fsr" : XefgModel().name;
+}
+
+const Model* ModelFor(const Pair& pair, ModelKind kind)
+{
+    if (kind != ModelKind::eFsr) return &XefgModel();
+    if (pair.fsr != nullptr) return pair.fsr;
+    Log("the FSR model is not in this build; XeFG runs instead");
+    return &XefgModel();
+}
+
+void LatchModel(State& state)
+{
+    if (state.model.load(std::memory_order_acquire) != nullptr) return;
+    state.modelAsked = WantedModel().load(std::memory_order_relaxed);
+    const auto* model = ModelFor(state.pair, state.modelAsked);
+    if (model->maxFrames != 0) state.pair.maxFrames = model->maxFrames;
+    state.model.store(model, std::memory_order_release);
+}
+
 bool NewContext(State& state)
 {
     std::string failure;
-    if (tensor_cores::Create(state.pair.fg, *state.pair.rvas, state.device.Get(), state.context, failure)) return true;
+    if (state.model.load()->create(state.pair, state.device.Get(), state.context, failure)) return true;
     status::Fail(failure);
     return false;
 }
 
 int InitializeContext(State& state, InitParams& init)
 {
-    const auto result = tensor_cores::Initialize(state.pair.fg, *state.pair.rvas, state.context, init);
+    const auto result = state.model.load()->initialize(state.pair, state.context, init);
     Log("init " + std::to_string(init.width) + "x" + std::to_string(init.height) + " format "
         + std::to_string(init.format) + " flags " + std::to_string(init.flags) + " frames "
         + std::to_string(init.maxFrames) + " result " + std::to_string(result));
@@ -546,7 +599,8 @@ Prepared CreateForShape(State& state, ID3D12Device* device, const policy::Contex
         fellBack ? state.pair.maxFrames : init.maxFrames};
     state.cache.Add(entry);
     Adopt(state, device, output, entry);
-    Log(ContextCostText(wanted, entry.frames, before, VideoMemoryOf(device)));
+    Log(ContextCostText(wanted, entry.frames, before, VideoMemoryOf(device)) + ", model "
+        + state.model.load()->name);
     return Prepared::eReady;
 }
 
@@ -557,6 +611,7 @@ Prepared Prepare(State& state, ID3D12GraphicsCommandList* list, const NVSDK_NGX_
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&device)))) return Prepared::eFailed;
     const policy::ContextShape wanted{device.Get(), static_cast<uint32_t>(output.Width), output.Height,
         static_cast<uint32_t>(output.Format), ContextFlags(params)};
+    LatchModel(state);
     const auto frames = policy::FramesFor(requested, state.pair.maxFrames);
     std::optional<policy::CurrentContext> current;
     if (state.context != nullptr) current = policy::CurrentContext{state.shape, state.serves};
@@ -602,6 +657,13 @@ std::string CostText()
     return policy::GpuCostText(execute, copies, total);
 }
 
+std::string ModelSummary()
+{
+    const auto* model = Get().model.load(std::memory_order_acquire);
+    if (model == nullptr || model == &XefgModel()) return tensor_cores::SummaryText();
+    return std::string("model ") + model->name;
+}
+
 std::string SummaryText(const Summary& summary, const NVSDK_NGX_Parameter* params)
 {
     std::string text = "summary 10 s: evaluates " + std::to_string(summary.evaluates) + ", generated "
@@ -616,7 +678,7 @@ std::string SummaryText(const Summary& summary, const NVSDK_NGX_Parameter* param
         + std::to_string(Value<float>(params, "DLSSG.MvecScaleY", 0.f)) + " reset "
         + std::to_string(Value<unsigned int>(params, "DLSSG.Reset", 0)) + " frames "
         + std::to_string(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 0)) + "; " + CostText() + "; "
-        + tensor_cores::SummaryText();
+        + ModelSummary();
 }
 
 void Summarize(const NVSDK_NGX_Parameter* params, bool generated, policy::Idle idle)
@@ -802,10 +864,12 @@ Captured CaptureInputs(State& state, ID3D12GraphicsCommandList* list, const NVSD
     return Captured::eReady;
 }
 
-void DescribeFrame(const State& state, const NVSDK_NGX_Parameter* params, Copies& next)
+void DescribeFrame(const State& state, const NVSDK_NGX_Parameter* params, Copies& next, float frameTimeMs)
 {
     auto& data = next.data;
     data = {};
+    next.extras = {Value<float>(params, "DLSSG.CameraNear", 0.f), Value<float>(params, "DLSSG.CameraFar", 0.f),
+        Value<float>(params, "DLSSG.CameraFOV", 0.f), frameTimeMs};
     data.backbuffer = Describe(next.backbuffer.Get());
     data.depth = Describe(next.depth.Get());
     data.motion = Describe(next.motion.Get());
@@ -828,6 +892,7 @@ Captured CapturePair(State& state, ID3D12GraphicsCommandList* list, const NVSDK_
 {
     state.retired.Collect(++state.pairs);
     const auto now = GetTickCount64();
+    const auto frameTimeMs = state.lastCaptureMs == 0 ? 0.f : static_cast<float>(now - state.lastCaptureMs);
     if (policy::PairIsStale(state.lastCaptureMs, now)) state.frames[state.current].valid = false;
     state.lastCaptureMs = now;
     state.current ^= 1;
@@ -846,7 +911,7 @@ Captured CapturePair(State& state, ID3D12GraphicsCommandList* list, const NVSDK_
         state.failed = true;
         return captured;
     }
-    DescribeFrame(state, params, next);
+    DescribeFrame(state, params, next, frameTimeMs);
     next.valid = true;
     return Captured::eReady;
 }
@@ -964,7 +1029,7 @@ Outcome ExecuteModel(State& state, ID3D12GraphicsCommandList* list, const policy
     execute.frameCount = 1;
     const bool composesHud = ComposesHud(state, next, previous);
     if (composesHud) FeedHudless(execute, next, previous);
-    const auto result = tensor_cores::Execute(state.pair.fg, *state.pair.rvas, state.context, list, execute);
+    const auto result = state.model.load()->execute(state.pair, state.context, list, execute, next.extras);
     if (result < 0)
     {
         Log("execute failed: " + std::to_string(result));
@@ -1155,6 +1220,34 @@ bool Passthrough(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* par
     {
         return false;
     }
+}
+
+const Model& XefgModel() noexcept
+{
+    static const Model model{"xefg", 0, XefgCreate, XefgInitialize, XefgExecute};
+    return model;
+}
+
+void ConfigureModel(ModelKind kind) noexcept
+{
+    WantedModel().store(kind, std::memory_order_relaxed);
+    auto& state = Get();
+    const auto* latched = state.model.load(std::memory_order_acquire);
+    if (latched == nullptr || state.modelAsked == kind) return;
+    if (ModelRestartLogged().exchange(true, std::memory_order_relaxed)) return;
+    try
+    {
+        Log(std::string("model stays ") + latched->name + " until the game restarts: xmxModel "
+            + (kind == ModelKind::eFsr ? "1" : "0") + " applies on the next launch");
+    }
+    catch (...) {}
+}
+
+const char* ModelInEffect() noexcept
+{
+    const auto* latched = Get().model.load(std::memory_order_acquire);
+    if (latched != nullptr) return latched->name;
+    return WantedModelName(WantedModel().load(std::memory_order_relaxed));
 }
 
 void Attach(const Pair& pair) noexcept

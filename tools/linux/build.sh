@@ -22,6 +22,8 @@ cmake -G Ninja -S "$native" -B "$build" \
     -DXESS_SDK_ROOT="${root[xess]}" \
     -DXESS_PROGRAMS_ROOT="$inputs/xess-programs" \
     -DXVK_VULKAN_INCLUDE_DIR="${root[vulkan14]}" \
+    -DMFG_FIDELITYFX_SDK_ROOT="${root[fidelityfx]}" \
+    -DMFG_FSR_SHADER_RUNNER="$here/wine.sh" \
     -DDLSS5_VK_DXC="$here/dxc" \
     -DVULKAN_INCLUDE_DIR="${root[vulkan12]}" \
     -DMFG_UNLOCK_BUILD_SINGLE_MODULE=ON \

@@ -1,0 +1,305 @@
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation.h
+index ccf2e23..6b59878 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation.h
+@@ -99,11 +99,11 @@ void computeInterpolatedColor(FfxUInt32x2 iPxPos, out FfxFloat32x3 fInterpolated
+     // Binarize disucclusion factor
+     FfxFloat32x2 fDisocclusionFactor = FfxFloat32x2(FFX_EQUAL(ffxSaturate(SampleDisocclusionMask(fLrUvInInterpolationRect).xy), FfxFloat32x2(1.0, 1.0)));
+ 
+-    InterpolationSourceColor fPrevColorGame = SampleTextureBilinear(false, fUvInScreenSpace, +gameMv.fMotionVector * fUvLetterBoxScale, DisplaySize()); // Get in previous frame buffer, the color of interpolated pixel
+-    InterpolationSourceColor fCurrColorGame = SampleTextureBilinear(true, fUvInScreenSpace, -gameMv.fMotionVector * fUvLetterBoxScale, DisplaySize()); // Get color in current framebuffer, of color of interpolated pixel
++    InterpolationSourceColor fPrevColorGame = SampleTextureBilinear(false, fUvInScreenSpace, +PreviousFrameOffset(gameMv.fMotionVector) * fUvLetterBoxScale, DisplaySize()); // Get in previous frame buffer, the color of interpolated pixel
++    InterpolationSourceColor fCurrColorGame = SampleTextureBilinear(true, fUvInScreenSpace, -CurrentFrameOffset(gameMv.fMotionVector) * fUvLetterBoxScale, DisplaySize()); // Get color in current framebuffer, of color of interpolated pixel
+ 
+-    InterpolationSourceColor fPrevColorOF = SampleTextureBilinear(false, fUvInScreenSpace, +ofMv.fMotionVector * fUvLetterBoxScale, DisplaySize());
+-    InterpolationSourceColor fCurrColorOF = SampleTextureBilinear(true, fUvInScreenSpace, -ofMv.fMotionVector * fUvLetterBoxScale, DisplaySize());
++    InterpolationSourceColor fPrevColorOF = SampleTextureBilinear(false, fUvInScreenSpace, +PreviousFrameOffset(ofMv.fMotionVector) * fUvLetterBoxScale, DisplaySize());
++    InterpolationSourceColor fCurrColorOF = SampleTextureBilinear(true, fUvInScreenSpace, -CurrentFrameOffset(ofMv.fMotionVector) * fUvLetterBoxScale, DisplaySize());
+ 
+     FfxFloat32 fDisoccludedFactor = 0.0f;
+ 
+@@ -115,9 +115,9 @@ void computeInterpolatedColor(FfxUInt32x2 iPxPos, out FfxFloat32x3 fInterpolated
+         // Inpaint in bi-directional disocclusion areas
+         updateInPaintingWeight(fInPaintingWeight, FfxFloat32(length(fDisocclusionFactor) <= FFX_FRAMEINTERPOLATION_EPSILON));
+ 
+-        FfxFloat32 t = 0.5f;
+-        t += 0.5f * (1 - (fDisocclusionFactor.x));
+-        t -= 0.5f * (1 - (fDisocclusionFactor.y));
++        FfxFloat32 t = InterpolationT();
++        t += (1.0f - InterpolationT()) * (1 - (fDisocclusionFactor.x));
++        t -= InterpolationT() * (1 - (fDisocclusionFactor.y));
+         // Say if fDisocclusionFactor.x is 1 and fDisocclusionFactor.y = 0, then t will be 0. fInterpolatedColor will be entirely from fPrevColorGame 
+         fInterpolatedColor = ffxLerp(fPrevColorGame.fRaw, fCurrColorGame.fRaw, ffxSaturate(t));
+         fDisoccludedFactor = ffxSaturate(1 - ffxMin(fDisocclusionFactor.x, fDisocclusionFactor.y));
+@@ -138,11 +138,11 @@ void computeInterpolatedColor(FfxUInt32x2 iPxPos, out FfxFloat32x3 fInterpolated
+ 
+     {
+ 
+-        FfxFloat32 ofT = 0.5f;
++        FfxFloat32 ofT = InterpolationT();
+ 
+         if (fPrevColorOF.fBilinearWeightSum > 0 && fCurrColorOF.fBilinearWeightSum > 0)
+         {
+-            ofT = 0.5f;
++            ofT = InterpolationT();
+         }
+         else if (fPrevColorOF.fBilinearWeightSum > 0)
+         {
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_callbacks_hlsl.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_callbacks_hlsl.h
+index a58743d..55a4dd4 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_callbacks_hlsl.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_callbacks_hlsl.h
+@@ -52,7 +52,7 @@
+         FfxFloat32      cameraFar;
+ 
+         FfxInt32x2      upscalerTargetSize;
+-        FfxInt32        Mode;
++        FfxInt32        generatedFrameIndex;
+         FfxInt32        reset;
+ 
+         FfxFloat32x4    fDeviceToViewDepth;
+@@ -77,7 +77,7 @@
+ 
+         FfxFloat32x2    minMaxLuminance;
+         FfxFloat32      fTanHalfFOV;
+-        FfxInt32        _pad1;
++        FfxFloat32      interpolationT;
+ 
+         FfxFloat32x2    fJitter;
+         FfxFloat32x2    fMotionVectorScale;
+@@ -160,6 +160,26 @@
+         return dispatchFlags;
+     }
+ 
++    FfxFloat32 InterpolationT()
++    {
++        return interpolationT;
++    }
++
++    FfxInt32 GeneratedFrameIndex()
++    {
++        return generatedFrameIndex;
++    }
++
++    FfxFloat32x2 PreviousFrameOffset(FfxFloat32x2 fHalfMotionVector)
++    {
++        return fHalfMotionVector * (interpolationT * 2.0f);
++    }
++
++    FfxFloat32x2 CurrentFrameOffset(FfxFloat32x2 fHalfMotionVector)
++    {
++        return fHalfMotionVector * ((1.0f - interpolationT) * 2.0f);
++    }
++
+     FfxInt32x2 GetMaxRenderSize()
+     {
+         return maxRenderSize;
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_common.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_common.h
+index 8206bf4..6d3f7d7 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_common.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_common.h
+@@ -362,8 +362,8 @@ void LoadInpaintedGameFieldMv(FfxFloat32x2 fUv, out VectorFieldEntry vfElement)
+         vfElement.bInPainted            = true;
+     }
+ 
+-    vfElement.bNegOutside = !IsUvInside(fUv - vfElement.fMotionVector);
+-    vfElement.bPosOutside = !IsUvInside(fUv + vfElement.fMotionVector);
++    vfElement.bNegOutside = !IsUvInside(fUv - CurrentFrameOffset(vfElement.fMotionVector));
++    vfElement.bPosOutside = !IsUvInside(fUv + PreviousFrameOffset(vfElement.fMotionVector));
+     vfElement.fVelocity   = length(vfElement.fMotionVector);
+ }
+ #endif
+@@ -409,8 +409,8 @@ void SampleOpticalFlowMotionVectorField(FfxFloat32x2 fUv, out VectorFieldEntry v
+         vfElement.uLowPriorityFactor /= fWeightSum;
+     }
+ 
+-    vfElement.bNegOutside = !IsUvInside(fUv - vfElement.fMotionVector);
+-    vfElement.bPosOutside = !IsUvInside(fUv + vfElement.fMotionVector);
++    vfElement.bNegOutside = !IsUvInside(fUv - CurrentFrameOffset(vfElement.fMotionVector));
++    vfElement.bPosOutside = !IsUvInside(fUv + PreviousFrameOffset(vfElement.fMotionVector));
+     vfElement.fVelocity   = length(vfElement.fMotionVector);
+ }
+ #endif
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_disocclusion_mask.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_disocclusion_mask.h
+index 03adc96..7f9c96c 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_disocclusion_mask.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_disocclusion_mask.h
+@@ -125,18 +125,17 @@ void computeDisocclusionMask(FfxInt32x2 iPxPos)
+     VectorFieldEntry gameMv;
+     LoadInpaintedGameFieldMv(fDepthUv, gameMv);
+ 
+-    const FfxFloat32 fDepthClipInterpolatedToPrevious   = 1.0f - ComputeDepthClip(0, fDepthUv + gameMv.fMotionVector, fDilatedDepth);
+-    const FfxFloat32 fDepthClipInterpolatedToCurrent    = 1.0f - ComputeDepthClip(1, fDepthUv - gameMv.fMotionVector, fDilatedDepth);
++    const FfxFloat32 fDepthClipInterpolatedToPrevious   = 1.0f - ComputeDepthClip(0, fDepthUv + PreviousFrameOffset(gameMv.fMotionVector), fDilatedDepth);
++    const FfxFloat32 fDepthClipInterpolatedToCurrent    = 1.0f - ComputeDepthClip(1, fDepthUv - CurrentFrameOffset(gameMv.fMotionVector), fDilatedDepth);
+     FfxFloat32x2 fDisocclusionMask = FfxFloat32x2(fDepthClipInterpolatedToPrevious, fDepthClipInterpolatedToCurrent);
+ 
+     fDisocclusionMask = FfxFloat32x2(FFX_GREATER_THAN_EQUAL(fDisocclusionMask, ffxBroadcast2(FFX_FRAMEINTERPOLATION_EPSILON)));
+ 
+     // Avoid false disocclusion if primary game vector pointer outside screen area
+-    const FfxFloat32x2 fSrcMotionVector   = gameMv.fMotionVector * 2.0f;
+-    const FfxInt32x2   iSamplePosPrevious = FfxInt32x2((fDepthUv + fSrcMotionVector) * RenderSize());
++    const FfxInt32x2   iSamplePosPrevious = FfxInt32x2((fDepthUv + PreviousFrameOffset(gameMv.fMotionVector) * 2.0f) * RenderSize());
+     fDisocclusionMask.x = ffxSaturate(fDisocclusionMask.x + FfxFloat32(!IsOnScreen(iSamplePosPrevious, RenderSize())));
+ 
+-    const FfxInt32x2 iSamplePosCurrent = FfxInt32x2((fDepthUv - fSrcMotionVector) * RenderSize());
++    const FfxInt32x2 iSamplePosCurrent = FfxInt32x2((fDepthUv - CurrentFrameOffset(gameMv.fMotionVector) * 2.0f) * RenderSize());
+     fDisocclusionMask.y = ffxSaturate(fDisocclusionMask.y + FfxFloat32(!IsOnScreen(iSamplePosCurrent, RenderSize())));
+ 
+     StoreDisocclusionMask(iPxPos, fDisocclusionMask);
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_game_motion_vector_field.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_game_motion_vector_field.h
+index 574e3df..18ddfbc 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_game_motion_vector_field.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_game_motion_vector_field.h
+@@ -46,7 +46,8 @@ void computeGameFieldMvs(FfxInt32x2 iPxPos)
+     const FfxFloat32 fDepthSample = LoadDilatedDepth(iPxPos + iDistortionPixelOffset);
+     const FfxFloat32x2 fGameMotionVector = LoadDilatedMotionVector(iPxPos + iDistortionPixelOffset);
+     const FfxFloat32x2 fMotionVectorHalf = fGameMotionVector * 0.5f;
+-    const FfxFloat32x2 fInterpolatedLocationUv = fUvInScreenSpace + fMotionVectorHalf;
++    const FfxFloat32x2 fMotionVectorToInterpolated = fGameMotionVector * (1.0f - InterpolationT());
++    const FfxFloat32x2 fInterpolatedLocationUv = fUvInScreenSpace + fMotionVectorToInterpolated;
+ 
+     const FfxFloat32 fViewSpaceDepth = ConvertFromDeviceDepthToViewSpace(fDepthSample);
+     const FfxUInt32 uHighPriorityFactorPrimary = getPriorityFactorFromViewSpaceDepth(fViewSpaceDepth);
+@@ -86,7 +87,7 @@ void computeGameFieldMvs(FfxInt32x2 iPxPos)
+         FfxUInt32 uNumPrimaryHits = 0;
+         const FfxFloat32 fSecondaryStepScale = length(1.0f / RenderSize());
+         const FfxFloat32x2 fStepMv = normalize(fGameMotionVector);
+-        const FfxFloat32 fBreakDist = ffxMin(length(fMotionVectorHalf), length(FfxFloat32x2(0.5f, 0.5f)));
++        const FfxFloat32 fBreakDist = ffxMin(length(fMotionVectorToInterpolated), length(FfxFloat32x2(0.5f, 0.5f)));
+ 
+         for (FfxFloat32 fMvScale = fSecondaryStepScale; fMvScale <= fBreakDist && bWriteSecondary; fMvScale += fSecondaryStepScale)
+         {
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_optical_flow_vector_field.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_optical_flow_vector_field.h
+index 8432132..1f68d21 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_optical_flow_vector_field.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_optical_flow_vector_field.h
+@@ -49,7 +49,7 @@ void computeOpticalFlowFieldMvs(FfxUInt32x2 dtID, FfxFloat32x2 fOpticalFlowVecto
+ 
+         const FfxUInt32x2 packedVectorPrimary = PackVectorFieldEntries(true, uHighPriorityFactor, uLowPriorityFactor, fMotionVectorHalf);
+ 
+-        BilinearSamplingData bilinearInfo = GetBilinearSamplingData(fUv + fMotionVectorHalf, GetOpticalFlowSize2());
++        BilinearSamplingData bilinearInfo = GetBilinearSamplingData(fUv + fOpticalFlowVector * (1.0f - InterpolationT()), GetOpticalFlowSize2());
+         for (FfxInt32 iSampleIndex = 0; iSampleIndex < 4; iSampleIndex++)
+         {
+             const FfxInt32x2 iOffset = bilinearInfo.iOffsets[iSampleIndex];
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_reconstruct_previous_depth.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_reconstruct_previous_depth.h
+index d85f673..c8d38db 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_reconstruct_previous_depth.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_reconstruct_previous_depth.h
+@@ -57,7 +57,7 @@ void reconstructPreviousDepth(FfxInt32x2 iPxPos)
+     FfxFloat32x2 fMotionVector = LoadDilatedMotionVector(iPxPos + iDistortionPixelOffset);
+     FfxFloat32   fDilatedDepth = LoadDilatedDepth(iPxPos + iDistortionPixelOffset);
+ 
+-    ReconstructPrevDepth(iPxPos, 1, fDilatedDepth, fMotionVector * 0.5f, RenderSize());
++    ReconstructPrevDepth(iPxPos, 1, fDilatedDepth, fMotionVector * (1.0f - InterpolationT()), RenderSize());
+ }
+ 
+ #endif // FFX_FRAMEINTERPOLATION_RECONSTRUCT_PREVIOUS_DEPTH_H
+diff --git a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_setup.h b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_setup.h
+index 60dd323..13bb7a6 100644
+--- a/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_setup.h
++++ b/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_setup.h
+@@ -27,7 +27,7 @@ void setupFrameinterpolationResources(FfxInt32x2 iPxPos)
+ {
+     // Update reset counters
+     StoreCounter(COUNTER_SPD, 0);
+-    if (all(FFX_EQUAL(iPxPos, FfxInt32x2(0, 0))))
++    if (all(FFX_EQUAL(iPxPos, FfxInt32x2(0, 0))) && GeneratedFrameIndex() == 0)
+     {
+         if(Reset() || HasSceneChanged()) {
+             StoreCounter(COUNTER_FRAME_INDEX_SINCE_LAST_RESET, 0);
+diff --git a/include/FidelityFX/host/ffx_frameinterpolation.h b/include/FidelityFX/host/ffx_frameinterpolation.h
+index 2340d04..476049c 100644
+--- a/include/FidelityFX/host/ffx_frameinterpolation.h
++++ b/include/FidelityFX/host/ffx_frameinterpolation.h
+@@ -279,6 +279,9 @@ typedef struct FfxFrameInterpolationDispatchDescription {
+     FfxResource                         reconstructedPrevDepth;             ///< The reconstructed depth buffer data
+ 
+     FfxResource                         distortionField;                    ///< A resource containing distortion offset data used when distortion post effects are enabled.
++    float                               interpolationT;
++    uint32_t                            generatedFrameIndex;
++    uint32_t                            generatedFrameCount;
+ } FfxFrameInterpolationDispatchDescription;
+ 
+ FFX_API FfxErrorCode ffxFrameInterpolationDispatch(FfxFrameInterpolationContext* context, const FfxFrameInterpolationDispatchDescription* params);
+diff --git a/src/components/frameinterpolation/ffx_frameinterpolation.cpp b/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+index a60ff6a..81b5f35 100644
+--- a/src/components/frameinterpolation/ffx_frameinterpolation.cpp
++++ b/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+@@ -928,17 +928,24 @@ FFX_API FfxErrorCode ffxFrameInterpolationDispatch(FfxFrameInterpolationContext*
+         contextPrivate->refreshPipelineStates = false;
+     }
+ 
+-    const bool bReset = (contextPrivate->dispatchCount == 0) || params->reset;
++    const bool bLegacyDispatch = params->generatedFrameCount == 0;
++    const bool bFirstOfPair    = bLegacyDispatch || params->generatedFrameIndex == 0;
++    const bool bLastOfPair     = bLegacyDispatch || params->generatedFrameIndex + 1 == params->generatedFrameCount;
+ 
+-    FFX_ASSERT_MESSAGE(!contextPrivate->asyncSupported || bReset || (params->frameID > contextPrivate->previousFrameID),
+-                       "When async support is enabled, and the reset flag is not set, frame ID must increment in each dispatch");
++    if (bFirstOfPair)
++    {
++        const bool bReset = (contextPrivate->dispatchCount == 0) || params->reset;
++
++        FFX_ASSERT_MESSAGE(!contextPrivate->asyncSupported || bReset || (params->frameID > contextPrivate->previousFrameID),
++                           "When async support is enabled, and the reset flag is not set, frame ID must increment in each dispatch");
+ 
+-    // Detect disjoint frameID values
+-    const bool bFrameID_Decreased   = params->frameID < contextPrivate->previousFrameID;
+-    const bool bFrameID_Skipped     = (params->frameID - contextPrivate->previousFrameID) > 1;
+-    const bool bDisjointFrameID     = bFrameID_Decreased || bFrameID_Skipped;
+-    contextPrivate->previousFrameID = params->frameID;
+-    contextPrivate->dispatchCount++;
++        const bool bFrameID_Decreased   = params->frameID < contextPrivate->previousFrameID;
++        const bool bFrameID_Skipped     = (params->frameID - contextPrivate->previousFrameID) > 1;
++        const bool bDisjointFrameID     = bFrameID_Decreased || bFrameID_Skipped;
++        contextPrivate->previousFrameID = params->frameID;
++        contextPrivate->dispatchCount++;
++        contextPrivate->constants.Reset = bReset || bDisjointFrameID;
++    }
+ 
+     contextPrivate->constants.renderSize[0]         = params->renderSize.width;
+     contextPrivate->constants.renderSize[1]         = params->renderSize.height;
+@@ -948,8 +955,8 @@ FFX_API FfxErrorCode ffxFrameInterpolationDispatch(FfxFrameInterpolationContext*
+     contextPrivate->constants.displaySizeRcp[1]     = 1.0f / params->displaySize.height;
+     contextPrivate->constants.upscalerTargetSize[0] = params->interpolationRect.width;
+     contextPrivate->constants.upscalerTargetSize[1] = params->interpolationRect.height;
+-    contextPrivate->constants.Mode                  = 0;
+-    contextPrivate->constants.Reset                 = bReset || bDisjointFrameID;
++    contextPrivate->constants.generatedFrameIndex   = bLegacyDispatch ? 0 : int(params->generatedFrameIndex);
++    contextPrivate->constants.interpolationT        = bLegacyDispatch ? 0.5f : params->interpolationT;
+     contextPrivate->constants.deltaTime             = params->frameTimeDelta;
+     contextPrivate->constants.HUDLessAttachedFactor = params->currentBackBuffer_HUDLess.resource ? 1 : 0;
+ 
+@@ -1195,7 +1202,7 @@ FFX_API FfxErrorCode ffxFrameInterpolationDispatch(FfxFrameInterpolationContext*
+             scheduleDispatch(contextPrivate, &contextPrivate->pipelineDebugView, displayDispatchSizeX, displayDispatchSizeY);
+         }
+ 
+-        // store current buffer
++        if (bLastOfPair)
+         {
+             FfxGpuJobDescription copyJobs[] = { {FFX_GPU_JOB_COPY} };
+             FfxResourceInternal  copySources[_countof(copyJobs)] = { contextPrivate->srvResources[FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_CURRENT_INTERPOLATION_SOURCE] };
+diff --git a/src/components/frameinterpolation/ffx_frameinterpolation_private.h b/src/components/frameinterpolation/ffx_frameinterpolation_private.h
+index e4c67e8..86cb853 100644
+--- a/src/components/frameinterpolation/ffx_frameinterpolation_private.h
++++ b/src/components/frameinterpolation/ffx_frameinterpolation_private.h
+@@ -51,7 +51,7 @@ typedef struct FrameInterpolationConstants
+     float   cameraFar;
+     
+     int32_t upscalerTargetSize[2];  // how is that different from display size?
+-    int     Mode;
++    int     generatedFrameIndex;
+     int     Reset;
+ 
+     float   deviceToViewDepth[4];
+@@ -76,7 +76,7 @@ typedef struct FrameInterpolationConstants
+ 
+     float    minMaxLuminance[2];
+     float    fTanHalfFOV;
+-    float   _pad1;
++    float   interpolationT;
+ 
+     float   jitter[2];
+     float   motionVectorScale[2];

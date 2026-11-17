@@ -5,17 +5,16 @@
 #include <nvsdk_ngx_params.h>
 #include <cstdint>
 #include <string>
+#include "xmx_model.h"
 #include "xmx_rules.h"
 
 namespace xmx::generator
 {
-struct Pair
-{
-    HMODULE fg = nullptr;
-    const Rvas* rvas = nullptr;
-    uint32_t maxFrames = 1;
-};
+enum class ModelKind { eXefg, eFsr };
 
+const Model& XefgModel() noexcept;
+void ConfigureModel(ModelKind kind) noexcept;
+const char* ModelInEffect() noexcept;
 void Attach(const Pair& pair) noexcept;
 bool Evaluate(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) noexcept;
 bool Passthrough(ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params) noexcept;

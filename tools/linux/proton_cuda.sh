@@ -399,6 +399,21 @@ run_xmx_contexts_test() {
     ( export MFG_TEST_GPU=1; run_route_test "$dir" "$name" "$exe" "$xess/bin" "$build/MFGUnlocker.dll" )
 }
 
+run_fsr_model_tests() {
+    local dir=$1 exe=$tests_build/fsr/FsrModelTests.exe name test
+    local tests=(two_x_matches_original four_x_middle_matches_two_x four_x_instants_differ skipped_last_resets
+        skipped_pair_resets offset_refused later_index_first)
+    for test in "${tests[@]}"; do
+        name=FsrModel_$test
+        [[ $name =~ ${MFG_ROUTE_FILTER:-.} ]] || continue
+        if [ ! -f "$exe" ]; then
+            printf 'xess_cuda_proton|%s|failed|%s is not built; tools/linux/test.sh builds tests/fsr\n' "$name" "$exe" >>"$dir/results.txt"
+            continue
+        fi
+        ( export MFG_TEST_GPU=1; run_route_test "$dir" "$name" "$exe" "$test" ) || return $?
+    done
+}
+
 stage_profile_reshade() {
     local dir=$1 exe=$2 entry
     rm -rf "$dir/bin"
@@ -478,6 +493,7 @@ run_route() {
     run_route_tests "$dir"
     status=$?
     [ "$status" = 3 ] || run_xmx_contexts_test "$dir" || status=$?
+    [ "$status" = 3 ] || run_fsr_model_tests "$dir" || status=$?
     printf '=== %s: results ===\n' "$mode"
     cat "$dir/results.txt"
     return $status

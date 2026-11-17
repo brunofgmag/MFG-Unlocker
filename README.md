@@ -34,6 +34,12 @@ kernels don't cover runs as a compute shader. `"xmxTensorCores": 0` in `RTXMFG-U
 next launch. The log's `XMX summary 10 s` line says whether the tensor cores are in use and counts their launches and
 fallbacks.
 
+XeMFG DLSS-G can also generate its frames with AMD's FSR 3.1 frame interpolation instead of XeFG's network.
+`"xmxModel": 1` in `RTXMFG-Universal.json` selects it and `0`, the default, keeps XeFG. The choice applies from the next
+launch. The build carries a modified FSR 3.1 that can place a frame at any point between two real frames, so 3x and up
+work, with the same frame count limit as XeFG. It treats a 10-bit back buffer as HDR10 (PQ), a 16-bit float one as scRGB
+and anything else as sRGB. The log names the model in `XMX summary 10 s` and on each context it creates.
+
 **XeLL sleep**, under Generation model, sends the game's Reflex sleep to Intel XeLL instead of NVIDIA's driver. It works
 with all three generation models (NVIDIA, XeMFG DLSS-G and ANR FG) in D3D12 games, and it needs `bin/libxell.dll` from
 the same XeSS SDK in the `RTXMFG-XeSS` folder. Under Proton it also keeps vkd3d-proton's low latency mode off, so

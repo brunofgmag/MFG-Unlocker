@@ -178,6 +178,41 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
         file(GLOB XESS_PROGRAM_INPUTS CONFIGURE_DEPENDS "${XESS_PROGRAMS_ROOT}/programs/*")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             xess/generate_xess_programs.py ${XESS_PROGRAM_INPUTS})
+        # fsr.1: the FSR 3.1 frame interpolation fork (fsr/fork.patch over the FidelityFX SDK v1.1.4). The generator stages
+        # the SDK subset it needs and compiles the permutations with the SDK's FidelityFX_SC.exe (under the runner on
+        # Linux); both branches below share it, and the stamp keeps an unchanged input from recompiling.
+        set(MFG_FIDELITYFX_SDK_ROOT "" CACHE PATH "FidelityFX SDK v1.1.4 checkout, the folder that holds sdk/")
+        set(MFG_FSR_SHADER_RUNNER "" CACHE FILEPATH "Runs the Windows FidelityFX_SC.exe on a Linux host (tools/linux/wine.sh); empty on Windows")
+        if(NOT EXISTS "${MFG_FIDELITYFX_SDK_ROOT}/sdk/tools/binary_store/FidelityFX_SC.exe")
+            message(FATAL_ERROR "Set MFG_FIDELITYFX_SDK_ROOT to the FidelityFX SDK v1.1.4 checkout (the folder that holds sdk/)")
+        endif()
+        set(MFG_FSR_GENERATED "${MFG_GENERATED}/fsr")
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/fsr/generate_fsr_shaders.py"
+            --sdk "${MFG_FIDELITYFX_SDK_ROOT}" --patch "${CMAKE_CURRENT_SOURCE_DIR}/fsr/fork.patch"
+            --output "${MFG_FSR_GENERATED}" --runner "${MFG_FSR_SHADER_RUNNER}"
+            COMMAND_ERROR_IS_FATAL ANY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            fsr/generate_fsr_shaders.py fsr/fork.patch
+            "${MFG_FIDELITYFX_SDK_ROOT}/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp")
+        set(MFG_FSR_SDK "${MFG_FSR_GENERATED}/sdk")
+        set(MFG_FSR_SDK_SOURCES
+            "${MFG_FSR_SDK}/src/components/frameinterpolation/ffx_frameinterpolation.cpp"
+            "${MFG_FSR_SDK}/src/components/opticalflow/ffx_opticalflow.cpp"
+            "${MFG_FSR_SDK}/src/backends/dx12/ffx_dx12.cpp"
+            "${MFG_FSR_SDK}/src/backends/shared/ffx_shader_blobs.cpp"
+            "${MFG_FSR_SDK}/src/backends/shared/blob_accessors/ffx_frameinterpolation_shaderblobs.cpp"
+            "${MFG_FSR_SDK}/src/backends/shared/blob_accessors/ffx_opticalflow_shaderblobs.cpp"
+            "${MFG_FSR_SDK}/src/shared/ffx_assert.cpp"
+            "${MFG_FSR_SDK}/src/shared/ffx_message.cpp"
+            "${MFG_FSR_SDK}/src/shared/ffx_breadcrumbs_list.cpp"
+            "${MFG_FSR_SDK}/src/shared/ffx_object_management.cpp")
+        set(MFG_FSR_INCLUDES "${MFG_FSR_SDK}/include" "${MFG_FSR_SDK}/src/components" "${MFG_FSR_SDK}/src/shared"
+            "${MFG_FSR_SDK}/src/backends/shared" "${MFG_FSR_SDK}/libs" "${MFG_FSR_GENERATED}/shaders")
+        set_source_files_properties(${MFG_FSR_SDK_SOURCES} PROPERTIES
+            COMPILE_OPTIONS "/w;/FIbit"
+            COMPILE_DEFINITIONS "FFX_FI;FFX_OF;_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR"
+            INCLUDE_DIRECTORIES "${MFG_FSR_INCLUDES}")
+        set_source_files_properties(fsr/fsr_model.cpp PROPERTIES INCLUDE_DIRECTORIES "${MFG_FSR_INCLUDES}")
         if(MFG_PREGENERATED_INPUTS)
             set(MFG_XEFG_CUDA_INPUTS "" CACHE PATH "Directory written by generate_cuda_layers.py --linux")
             if(NOT MFG_XEFG_CUDA_INPUTS)
@@ -234,6 +269,7 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
             xess/host_unlock.cpp xess/intel_native.cpp xess/motion_fill.cpp xess/hudless_match.cpp xess/cuda/cuda_route.cpp xess/cuda/buffer_views.cpp xess/cuda/provider_list.cpp
             xess/d3d12_host.cpp xess/host_xell_binding.cpp
             xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_hud_composite.cpp xmx/xmx_context.cpp xmx/xmx_tensor_cores.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp
+            fsr/fsr_model.cpp ${MFG_FSR_SDK_SOURCES}
             anr/anr.cpp)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_programs.rc" xess_programs 1 3901 "${MFG_GENERATED}" packed_programs)
         mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_shaders.rc" xess_shaders 2 3902 "${MFG_GENERATED}" packed_shaders)

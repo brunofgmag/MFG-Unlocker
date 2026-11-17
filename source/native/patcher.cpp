@@ -454,6 +454,7 @@ struct ControlConfig
     bool xmxHud = true;
     bool xmxHudDebug = false;
     bool xmxTensorCores = true;
+    uint32_t xmxModel = 0;
     bool anr = false;
     uint32_t xemfgFrames = 0;
     // XeMFG standalone's Dynamic MFG (xess/xemfg_dynamic.h), up to xemfgFrames: its target (0 = the FPS
@@ -1842,6 +1843,11 @@ bool TryParseControl(const char* data, size_t size, ControlConfig& control)
         && !TryParseUnsigned(content, "xmxTensorCores", 0, 1, xmxTensorCores))
         return false;
     parsed.xmxTensorCores = xmxTensorCores != 0;
+    uint32_t xmxModel = 0;
+    if (FindJsonValue(content, "xmxModel", xessOffset)
+        && !TryParseUnsigned(content, "xmxModel", 0, 1, xmxModel))
+        return false;
+    parsed.xmxModel = xmxModel;
     uint32_t anr = 0;
     if (FindJsonValue(content, "anr", xessOffset)
         && !TryParseUnsigned(content, "anr", 0, 1, anr))
@@ -2015,6 +2021,7 @@ ControlConfig EffectiveControl(const ControlConfig& saved) noexcept
     effective.xmxHud = false;
     effective.xmxHudDebug = false;
     effective.xmxTensorCores = false;
+    effective.xmxModel = 0;
     effective.anr = false;
     effective.dynamicExperimental56 = false;
     effective.generatedOnlyDebug = false;
@@ -2257,6 +2264,7 @@ void ConfigureReflexSleep(const ControlConfig& control) noexcept
         Log(L"%s", xmx::stand_in::ConfigLine(control.xmxStandIn, xmx::Latched()));
     xmx::ConfigureHud(control.xmxHud, control.xmxHudDebug);
     xmx::ConfigureTensorCores(control.xmxTensorCores);
+    xmx::ConfigureModel(control.xmxModel);
 }
 
 // XeMFG replaces the game's DLSS Frame Generation (held at Off) while a host may run it.
@@ -3349,7 +3357,7 @@ bool WriteBridgeStatus(const ControlConfig& control, DWORD pid, bool disk = true
     else if (reflex.refusedModule)
         strcpy_s(refusedReflex, "unreadable");
     char pacing[2048]{};
-    sprintf_s(pacing, ",\"vsyncMode\":%u,\"reflexFrameLimitFps\":%u,\"reflexSleepSkip\":%s,\"xmxXell\":%s,\"xmxXellReady\":%s,\"xmxStandIn\":%s,\"xmxStandInLive\":%u,\"xmxHud\":%s,\"xmxHudDebug\":%s,\"xmxHudComposed\":%llu,\"xmxTensorCores\":%s,"
+    sprintf_s(pacing, ",\"vsyncMode\":%u,\"reflexFrameLimitFps\":%u,\"reflexSleepSkip\":%s,\"xmxXell\":%s,\"xmxXellReady\":%s,\"xmxStandIn\":%s,\"xmxStandInLive\":%u,\"xmxHud\":%s,\"xmxHudDebug\":%s,\"xmxHudComposed\":%llu,\"xmxTensorCores\":%s,\"xmxModel\":\"%s\","
         "\"dynamicVsyncAvailable\":%s,\"vsyncControlAvailable\":%s,"
         "\"vsyncOverrideApplied\":%s,\"vsyncPresentationObserved\":%s,"
         "\"vsyncOriginalInterval\":%u,\"vsyncSubmittedInterval\":%u,\"vsyncFailure\":%u,"
@@ -3366,6 +3374,7 @@ bool WriteBridgeStatus(const ControlConfig& control, DWORD pid, bool disk = true
         control.xmxStandIn ? "true" : "false", static_cast<uint32_t>(xmx::StandInLive()),
         control.xmxHud ? "true" : "false", control.xmxHudDebug ? "true" : "false",
         static_cast<unsigned long long>(xmx::HudComposed()), xmx::TensorCoresInEffect() ? "true" : "false",
+        xmx::ModelInEffect(),
         VsyncRuntimeCurrent() && DynamicMfgSupported() ? "true" : "false",
         vsync.available ? "true" : "false", vsync.overrideApplied ? "true" : "false",
         vsync.matched ? "true" : "false", vsync.originalInterval, vsync.submittedInterval,

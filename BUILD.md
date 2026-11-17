@@ -104,6 +104,14 @@ and outputs. The fixed export map is recorded in `proxy_exports.txt`; generation
 does not scan DLLs on the build machine. Third-party notices, including the
 XeSS program-data notice, remain embedded in the release DLL.
 
+The FSR 3.1 frame interpolation generator (`source/native/fsr/`) needs the AMD FidelityFX SDK v1.1.4 (tag `v1.1.4`, commit
+`c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`): point the CMake cache variable `MFG_FIDELITYFX_SDK_ROOT` at the checkout, the folder
+that holds `sdk/`. At configure time `fsr/generate_fsr_shaders.py` copies the parts of `sdk/` the build uses into
+`generated/fsr/sdk`, applies `fsr/fork.patch` there and compiles the frame interpolation and optical flow permutations with
+the SDK's own `sdk/tools/binary_store/FidelityFX_SC.exe` (72 compiles, a few seconds). The SDK checkout itself is never
+modified. A stamp of the patch, the script and the SDK's `ffx_frameinterpolation.cpp` lets an unchanged configure skip the
+step. `MFG_FSR_SHADER_RUNNER` names the program that runs the Windows compiler on a Linux host and stays empty on Windows.
+
 The Witcher 3 hair converter header is generated from
 `source/native/witcher_dots/converter.hlsl` and `converter_source.h.in`.
 Generated headers and runtime shader caches are not source inputs to publish.
@@ -177,10 +185,15 @@ Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A m
 | --- | --- | --- |
 | Streamline SDK 2.14.1 | `~/.cache/mfg-unlocker/sdk/streamline-sdk-v2.14.1` | `MFG_STREAMLINE_ROOT` |
 | XeSS SDK 3.0.2 | `~/.cache/mfg-unlocker/sdk/xess-sdk-3.0.2` | `MFG_XESS_SDK_ROOT` |
+| FidelityFX SDK v1.1.4 | `~/.cache/mfg-unlocker/sdk/fidelityfx-sdk-v1.1.4` | `MFG_FIDELITYFX_SDK_ROOT` |
 | Dear ImGui `3912b3d` | `~/Projetos/renodx/external/reshade/deps/imgui` | `MFG_IMGUI_ROOT` |
 | Vulkan 1.2.176 headers | a Vulkan-Headers git checkout with tag `v1.2.176` | `MFG_VULKAN12_HEADERS_GIT` |
 | Vulkan 1.4.363 headers and SPIR-V grammar | `/usr/include` (Arch packages `vulkan-headers` and `spirv-headers`) | `MFG_VULKAN14_INCLUDE` |
 | Release 1.7.1 zip | `~/.cache/mfg-unlocker/release/v1.7.1/MFGUnlocker-v1.7.1.zip` | `MFG_RELEASE_ZIP` |
+
+The FidelityFX SDK is not pinned by SHA-256 here: the generator's stamp covers the patch, the script and the SDK's
+`ffx_frameinterpolation.cpp`, and `git apply` fails if the SDK is not the version the patch was cut from. The SDK's shader
+compiler runs under `tools/linux/wine.sh`.
 
 The pins describe the Windows checkouts, which use CRLF. ImGui and the Vulkan headers match only after LF to CRLF, so the
 script verifies them in that form and builds from a pinned CRLF copy in `~/.cache/mfg-unlocker/sdk/crlf`. The Vulkan
@@ -236,7 +249,8 @@ sample under Proton for 90 seconds with `VKD3D_SHADER_DUMP_PATH` set, and keeps 
 the route recognizes in `~/.cache/mfg-unlocker/intel-programs`. The cases write their output to
 `build/proton-cuda/route/tests/<case>/output.txt`. The route also runs `XmxTensorCoreContextsTests` from `tests/xmx`,
 which `test.sh` builds before it: 16 XeMFG DLSS-G contexts at different sizes, and the sixteenth must still launch on the
-tensor cores. Each XeFG context brings 28 layer pipelines, and the route holds up to 512.
+tensor cores. Each XeFG context brings 28 layer pipelines, and the route holds up to 512. It also runs the seven `FsrModel_*`
+tests of the FSR 3.1 model from `tests/fsr`, one process per test, because they need Proton's D3D12 device.
 
 `tools/linux/proton_cuda.sh profile` measures where the GPU time of one XeFG `execute` goes. It runs `XmxXefgProfile` from
 `tests/xmx` under Proton, drives XeFG at MSFS 2024's shapes (3840x2160 output, 2560x1440 render, 3 generated frames, HUD

@@ -3,6 +3,7 @@
 #include <cwchar>
 #include <string>
 
+#include "fsr/fsr_model.h"
 #include "gpu_dispatch.h"
 #include "single_module.h"
 #include "xess/xess_mod.h"
@@ -272,6 +273,7 @@ void LoadedRuntime(const std::wstring& folder)
     Check(gAttachCalls == 1 && gAttached.fg == fg, "the generator attaches to the module the game loaded");
     Check(gPublishedFg == fg && gPublishedLl == ll, "the model is published on the game's own pair");
     Check(gAttached.rvas != nullptr && gAttached.maxFrames == xmx::kMaxFrames, "the pair is the fg78 family");
+    Check(gAttached.fsr == &fsr::Model(), "the pair carries the FSR model");
     bool handled = false;
     const auto result = EvaluateOnce(handled);
     Check(handled && result == NVSDK_NGX_Result_Success, "a ready runtime hands the call to the generator");
@@ -641,6 +643,15 @@ bool InEffect() noexcept
 }
 }
 
+namespace fsr
+{
+const xmx::generator::Model& Model() noexcept
+{
+    static const xmx::generator::Model model{"fsr", xmx::kMaxFrames, nullptr, nullptr, nullptr};
+    return model;
+}
+}
+
 namespace xmx::generator
 {
 void Attach(const Pair& pair) noexcept
@@ -659,6 +670,15 @@ bool Passthrough(ID3D12GraphicsCommandList*, const NVSDK_NGX_Parameter*) noexcep
 {
     ++gPassthroughCalls;
     return gPassthroughAnswer;
+}
+
+void ConfigureModel(ModelKind) noexcept
+{
+}
+
+const char* ModelInEffect() noexcept
+{
+    return "xefg";
 }
 
 std::string MemoryLine() noexcept
