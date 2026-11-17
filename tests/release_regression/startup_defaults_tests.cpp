@@ -66,6 +66,8 @@ int wmain(int argc, wchar_t** argv)
     check(has("mode",follow?"\"follow\"":mode==L"dynamic"?"\"dynamic\"":"\"fixed\""),"startup mode matches requested semantics");
     check(has("xmxHud","true")&&has("xmxHudDebug","false")&&has("xmxHudComposed","0"),"HUD composition is on, its debug paint off and nothing composed when the JSON omits the keys");
     check(!logged("HUD composition")&&!logged("HUD debug"),"the HUD defaults log no change line");
+    check(has("xmxTensorCores","true"),"the tensor-core route is on when the JSON omits the key");
+    check(!logged("tensor cores"),"the tensor-core default logs no line");
     const char* multiplier=mode==L"fixed"?"3":mode==L"environment"?"5":mode==L"legacy"||mode==L"dynamic"?"4":"2";
     check(has("multiplier",multiplier),"saved or explicit multiplier is retained");
     if(mode==L"dynamic") check(has("dynamicTargetFrameRate","120"),"saved Dynamic target is retained");

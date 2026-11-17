@@ -2750,6 +2750,13 @@ void InstallProviderTensorCores(HMODULE provider, ID3D12Device* device) noexcept
     std::lock_guard lock(state.fgMutex);
     if (state.hostPorted && state.model) InstallTensorCores(provider, device, false);
 }
+bool InstallMultiFrameTensorCores(HMODULE fg, ID3D12Device* device) noexcept
+{
+    auto& state = Get();
+    std::lock_guard lock(state.fgMutex);
+    if (MultiFrameModelPublishedOn(state, fg)) InstallTensorCores(fg, device, false);
+    return xefg_cuda::Snapshot().state == xefg_cuda::State::Active;
+}
 std::span<const unsigned char> TensorCoreFatbin()
 {
     return xess_payload::Read(Self(), xefg_cuda::embedded::fatbin);

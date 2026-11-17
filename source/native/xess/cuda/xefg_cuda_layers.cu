@@ -31,6 +31,16 @@ DEVI uint4 Fetch1D(uint64_t texture, int element)
     asm("tex.1d.v4.u32.s32 {%0,%1,%2,%3}, [%4, {%5}];" : "=r"(a), "=r"(b), "=r"(c), "=r"(d) : "l"(texture), "r"(element));
     return make_uint4(a, b, c, d);
 }
+DEVI uint4 LoadGlobal(uint64_t address)
+{
+    uint32_t a, b, c, d;
+    asm("ld.global.nc.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(a), "=r"(b), "=r"(c), "=r"(d) : "l"(address));
+    return make_uint4(a, b, c, d);
+}
+DEVI uint4 FetchWords(const XefgCudaParams& p, uint64_t source, int element)
+{
+    return p.bufferMode == kBufferAddresses ? LoadGlobal(source + uint64_t(element)*16) : Fetch1D(source, element);
+}
 DEVI uint32_t Component(const uint4& v, int k) { return k == 0 ? v.x : k == 1 ? v.y : k == 2 ? v.z : v.w; }
 // Texel (x, y) of layer `layer` as a typed store, like the Intel program's uint4 UAV store: the view's
 // format decides what is written (an R32G32_UINT tensor keeps x, y; XeFG stores 8-channel flow tensors so).
@@ -121,9 +131,9 @@ DEVI uint32_t JoinHalves(uint32_t lowRow, uint32_t highRow, int t)
 // W[st*144 .. st*144 + 143], where W[(z*IN + slice)*144 + tap*16 + word*4 + s].l feeds output channel
 // 16z + 4s + l from input channels 4*word..4*word+3.
 constexpr int kBlock = 144;
-DEVI void StageBlock(uint64_t weights, int block, uint4* dst)
+DEVI void StageBlock(const XefgCudaParams& p, int block, uint4* dst)
 {
-    for (int i = threadIdx.x; i < kBlock; i += 128) dst[i] = Fetch1D(weights, block*kBlock + i);
+    for (int i = threadIdx.x; i < kBlock; i += 128) dst[i] = FetchWords(p, p.weights, block*kBlock + i);
 }
 DEVI void LoadConvB(const uint4* block, int g, int t, uint32_t (&b)[9][2])
 {
@@ -153,7 +163,7 @@ DEVI void PoolConv(const XefgCudaParams& p)
     constexpr int ZPER = OUT/ZSPLIT;
     static_assert(OUT % ZSPLIT == 0, "output slices per block");
     const int zBegin = int(blockIdx.z)*ZPER, firstBlock = zBegin*IN;
-    StageBlock(p.weights, firstBlock, wsm[0]);
+    StageBlock(p, firstBlock, wsm[0]);
     for (int i = threadIdx.x; i < IN*WIN; i += 128)
     {
         const int slice = i/WIN, r = i%WIN;
@@ -181,7 +191,7 @@ DEVI void PoolConv(const XefgCudaParams& p)
         for (int slice = 0; slice < IN; ++slice)
         {
             const int st = z*IN + slice, cur = (st - firstBlock) & 1;
-            if (st + 1 < (zBegin + ZPER)*IN) StageBlock(p.weights, st + 1, wsm[cur ^ 1]);
+            if (st + 1 < (zBegin + ZPER)*IN) StageBlock(p, st + 1, wsm[cur ^ 1]);
             uint32_t b[9][2];
             LoadConvB(wsm[cur], g, t, b);
             const uint32_t* wslice = ws + slice*WIN*4;
@@ -200,7 +210,7 @@ DEVI void PoolConv(const XefgCudaParams& p)
         for (int n = 0; n < 2; ++n)
         {
             const int oc = z*16 + n*8 + 2*t;
-            const uint4 sv = Fetch1D(p.scale, oc >> 2), bv = Fetch1D(p.bias, oc >> 2);
+            const uint4 sv = FetchWords(p, p.scale, oc >> 2), bv = FetchWords(p, p.bias, oc >> 2);
             s[n][0] = __uint_as_float(Component(sv, oc & 3)); s[n][1] = __uint_as_float(Component(sv, (oc & 3) + 1));
             bi[n][0] = __uint_as_float(Component(bv, oc & 3)); bi[n][1] = __uint_as_float(Component(bv, (oc & 3) + 1));
         }
@@ -268,7 +278,7 @@ DEVI void UpSkip(const XefgCudaParams& p)
     __shared__ uint4 wsm[2][kBlock];
     const int Wd = int(p.constants[0]), Hd = int(p.constants[1]);
     const int X0 = blockIdx.x*16, Y0 = blockIdx.y*TILE_H;
-    StageBlock(p.weights, 0, wsm[0]);
+    StageBlock(p, 0, wsm[0]);
     for (int i = threadIdx.x; i < IN*WIN; i += 128)
     {
         const int slice = i/WIN, r = i%WIN;
@@ -314,7 +324,7 @@ DEVI void UpSkip(const XefgCudaParams& p)
         for (int slice = 0; slice < IN; ++slice)
         {
             const int st = z*IN + slice, cur = st & 1;
-            if (st + 1 < OUT*IN) StageBlock(p.weights, st + 1, wsm[cur ^ 1]);
+            if (st + 1 < OUT*IN) StageBlock(p, st + 1, wsm[cur ^ 1]);
             uint32_t b[9][2];
             LoadConvB(wsm[cur], g, t, b);
 #pragma unroll
@@ -326,7 +336,7 @@ DEVI void UpSkip(const XefgCudaParams& p)
         for (int n = 0; n < 2; ++n)
         {
             const int oc = z*16 + n*8 + 2*t;
-            const uint4 sv = Fetch1D(p.scale, oc >> 2), bv = Fetch1D(p.bias, oc >> 2);
+            const uint4 sv = FetchWords(p, p.scale, oc >> 2), bv = FetchWords(p, p.bias, oc >> 2);
             s[n][0] = __uint_as_float(Component(sv, oc & 3)); s[n][1] = __uint_as_float(Component(sv, (oc & 3) + 1));
             bi[n][0] = __uint_as_float(Component(bv, oc & 3)); bi[n][1] = __uint_as_float(Component(bv, (oc & 3) + 1));
         }
@@ -387,7 +397,7 @@ DEVI void Flow(const XefgCudaParams& p)
         {
             const int nt = e/72, group = (e%72)/36, k = e%36;
             const int ch = (n0 + nt)*8, z = ch/NOUT, c = ch%NOUT;
-            dst[e] = Fetch1D(p.weights, ((z*NIT + i)*(NOUT/4) + c/4 + group)*36 + k);
+            dst[e] = FetchWords(p, p.weights, ((z*NIT + i)*(NOUT/4) + c/4 + group)*36 + k);
         }
     };
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
@@ -423,7 +433,7 @@ DEVI void Flow(const XefgCudaParams& p)
     for (int n = 0; n < NT; ++n)
     {
         const int ch = (n0 + n)*8 + 2*t;
-        const uint4 bv = Fetch1D(p.scale, ch >> 2), nv = Fetch1D(p.bias, ch >> 2);
+        const uint4 bv = FetchWords(p, p.scale, ch >> 2), nv = FetchWords(p, p.bias, ch >> 2);
         const int ib0 = int(Component(bv, ch & 3)), ib1 = int(Component(bv, (ch & 3) + 1));
         const int ng0 = int(Component(nv, ch & 3)), ng1 = int(Component(nv, (ch & 3) + 1));
         auto requant = [&](int a, int ib, int neg) -> uint32_t {

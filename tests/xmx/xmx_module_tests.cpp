@@ -10,6 +10,7 @@
 #include "xmx/xmx_generator.h"
 #include "xmx/xmx_latency.h"
 #include "xmx/xmx_stand_in.h"
+#include "xmx/xmx_tensor_cores.h"
 
 namespace
 {
@@ -22,6 +23,8 @@ bool gGeneratorAnswer = true;
 unsigned gGeneratorEvaluates = 0;
 bool gPassthroughAnswer = true;
 unsigned gPassthroughCalls = 0;
+unsigned gTensorCoresConfigured = 0;
+bool gTensorCoresValue = false;
 unsigned gLimitLogs = 0;
 bool gTranslatedGpu = false;
 unsigned gDeviceQueries = 0;
@@ -147,6 +150,14 @@ unsigned IdOf(const NVSDK_NGX_Handle* handle)
 HMODULE LoadFrom(const std::wstring& folder, const wchar_t* name, DWORD flags = LOAD_WITH_ALTERED_SEARCH_PATH)
 {
     return LoadLibraryExW((folder + L"\\" + name).c_str(), nullptr, flags);
+}
+
+void TensorCoresKey()
+{
+    xmx::ConfigureTensorCores(true);
+    Check(gTensorCoresConfigured == 1 && gTensorCoresValue, "the tensor-core key reaches the tensor-core module as on");
+    xmx::ConfigureTensorCores(false);
+    Check(gTensorCoresConfigured == 2 && !gTensorCoresValue, "and as off");
 }
 
 void RouteBeforeLatch()
@@ -611,6 +622,15 @@ bool PublishMultiFrameModel(HMODULE fg, HMODULE ll, std::string&) noexcept
 }
 }
 
+namespace xmx::tensor_cores
+{
+void Configure(bool on) noexcept
+{
+    ++gTensorCoresConfigured;
+    gTensorCoresValue = on;
+}
+}
+
 namespace xmx::generator
 {
 void Attach(const Pair& pair) noexcept
@@ -649,7 +669,8 @@ int wmain(int argc, wchar_t** argv)
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     const std::wstring mode = argv[1];
     const std::wstring folder = argc > 2 ? argv[2] : L"";
-    if (mode == L"route-before-latch") RouteBeforeLatch();
+    if (mode == L"tensor-cores-key") TensorCoresKey();
+    else if (mode == L"route-before-latch") RouteBeforeLatch();
     else if (mode == L"no-route") NoRoute();
     else if (mode == L"routes-without-latch") RoutesWithoutLatch();
     else if (mode == L"hooked-without-latch") HookedWithoutLatch();

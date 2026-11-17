@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "optiscaler_host.h"
 #include "single_module.h"
+#include "xess/cuda/cuda_route.h"
 #include "xess/runtime_layout.h"
 #include "xess/xess_mod.h"
 #include "xmx/xmx_context.h"
@@ -405,6 +407,59 @@ void Log(const wchar_t* text) noexcept
 }
 }
 
+namespace xefg_cuda
+{
+struct InstallRecord
+{
+    unsigned calls = 0;
+    ID3D12Device* device = nullptr;
+    HMODULE module = nullptr;
+    bool adoptLists = true;
+};
+InstallRecord gInstall;
+State gState = State::NotAttempted;
+
+void SetLog(LogFunction) noexcept
+{
+}
+
+void SetLayerMask(uint32_t) noexcept
+{
+}
+
+void Disable(const char*) noexcept
+{
+}
+
+bool Install(ID3D12Device* device, HMODULE module, std::span<const unsigned char>, std::string&,
+    bool adoptLists) noexcept
+{
+    gInstall = {gInstall.calls + 1, device, module, adoptLists};
+    gState = State::Active;
+    return true;
+}
+
+Status Snapshot() noexcept
+{
+    Status status;
+    status.state = gState;
+    return status;
+}
+}
+
+namespace optiscaler_host
+{
+bool ReadXefgTensorCores(std::wstring&) noexcept
+{
+    return true;
+}
+
+uint32_t ReadXefgTensorCoresMask(std::wstring&) noexcept
+{
+    return 0x1FFFFu;
+}
+}
+
 namespace xess_mod
 {
 HMODULE Self() noexcept
@@ -441,10 +496,24 @@ int wmain(int argc, wchar_t** argv)
     Check(VtableLooksRight(fg, rvas->contextVtable), "the context vtable RVA is a table of code thunks in .rdata");
 
     std::string error;
+    auto* const device = reinterpret_cast<ID3D12Device*>(static_cast<uintptr_t>(0x1000));
+    const auto before = xefg_cuda::gInstall.calls;
+    Check(!xess_mod::InstallMultiFrameTensorCores(fg, device) && xefg_cuda::gInstall.calls == before,
+        "before the model is published the tensor-core route is not installed and reports inactive");
     const bool published = xess_mod::PublishMultiFrameModel(fg, ll, error);
     if (!Check(published, "the multi-frame model publishes through xess_mod"))
         std::printf("publish error: %s\n", error.c_str());
     Check(xess_mod::PublishMultiFrameModel(fg, ll, error), "a second publication on the same pair is a no-op");
+    if (published)
+    {
+        Check(!xess_mod::InstallMultiFrameTensorCores(ll, device) && xefg_cuda::gInstall.calls == before,
+            "a runtime image the model was not published on is not installed");
+        Check(xess_mod::InstallMultiFrameTensorCores(fg, device) && xefg_cuda::gInstall.calls == before + 1,
+            "on the published image the route is installed and reports active");
+        Check(xefg_cuda::gInstall.device == device && xefg_cuda::gInstall.module == fg
+                && !xefg_cuda::gInstall.adoptLists,
+            "it is installed for that device and image without adopting lists, as XeFG records into the game's list");
+    }
 
     int outcome = published && mode == L"device" ? RunOnDevice(fg, *rvas) : 0;
     if (published && mode == L"execute")

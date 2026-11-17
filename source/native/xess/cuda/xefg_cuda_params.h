@@ -5,10 +5,16 @@
 // Dispatch from the descriptor tables XeFG bound for that layer:
 //   texture handles (NvAPI_D3D12_GetCudaIndependentDescriptorObject, TEXTURE) for its SRVs and
 //   the surface handle (SURFACE) for its UAV. A handle names the descriptor slot, like a table entry.
-// Reads use integer coordinates: out of range returns 0 (D3D12 Load semantics). Stores use the
+// With bufferMode kBufferAddresses, weights, scale and bias are instead the GPU virtual addresses of
+// their buffer views' first element: vkd3d-proton gives no CUDA object for a buffer view.
+// Texture reads use integer coordinates: out of range returns 0 (D3D12 Load semantics). In address mode the
+// weights, scale and bias reads follow Intel's program layout with no bounds check. Stores use the
 // .zero boundary mode: out of range is discarded (D3D12 UAV store semantics).
 #pragma once
 #include <cstdint>
+
+inline constexpr uint32_t kBufferTextures = 0;
+inline constexpr uint32_t kBufferAddresses = 1;
 
 struct XefgCudaParams
 {
@@ -20,6 +26,8 @@ struct XefgCudaParams
     uint64_t output;   // u0: output tensor (RWTexture2DArray<uint4>)
     uint32_t limitW;   // output positions Intel's Dispatch covers (its group count x its group footprint);
     uint32_t limitH;   // the kernels write exactly these positions, like the replaced Dispatch
+    uint32_t bufferMode;
+    uint32_t reserved;
     uint32_t constants[12]; // the layer's root constants (b0)
 };
-static_assert(sizeof(XefgCudaParams) == 104, "kernel parameter layout");
+static_assert(sizeof(XefgCudaParams) == 112, "kernel parameter layout");

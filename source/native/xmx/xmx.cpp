@@ -4,6 +4,7 @@
 #include "xmx_policy.h"
 #include "xmx_stand_in.h"
 #include "xmx_status.h"
+#include "xmx_tensor_cores.h"
 #include "tag_states.h"
 #include "gpu_dispatch.h"
 #include "single_module.h"
@@ -444,6 +445,11 @@ bool ConfigureHud(bool on, bool debug) noexcept
                        : "HUD debug off: generated frames carry the real frame's HUD");
     });
     return onChanged || debugChanged;
+}
+
+void ConfigureTensorCores(bool on) noexcept
+{
+    tensor_cores::Configure(on);
 }
 
 uint64_t HudComposed() noexcept

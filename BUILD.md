@@ -163,12 +163,12 @@ presentation in a game.
 ## Building on Linux
 
 `tools/linux/build.sh` builds `RTXMFGUnified` into `build/linux/MFGUnlocker.dll` with clang-cl and lld-link against
-an xwin copy of the Windows CRT and SDK. It does not run MSVC, nvcc, glslangValidator or the Windows SDK's `dxc.exe`.
+an xwin copy of the Windows CRT and SDK. It does not run MSVC, glslangValidator or the Windows SDK's `dxc.exe`. It does run `nvcc`, for the tensor-core kernels only.
 The Windows build above is untouched: `source/native/CMakeLists.txt` only takes the Linux branches when
 `MFG_PREGENERATED_INPUTS` is set, and `build.ps1` never sets it.
 
 Tools on the machine: clang-cl, lld-link, llvm-rc, llvm-mt, llvm-ml, llvm-lib, CMake 3.24 or newer, Ninja, Python 3.10
-or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. Wine is
+or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. CUDA Toolkit 13.4 (`/opt/cuda/bin/nvcc`, or `MFG_NVCC`) compiles the tensor-core kernels. Wine is
 needed only for `test.sh`. The script prints the versions it finds and does not fail on them.
 
 Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A mismatch stops the script and names the file:
@@ -189,15 +189,26 @@ pinned by `source/native/CMakeLists.txt`, in its CRLF form); `tools/linux/check_
 list grows, the script stops with "missing"; delete `~/.cache/mfg-unlocker/sdk/crlf` and run it again.
 
 Some inputs need Windows-only tools, which Linux does not have. The script takes them from the release DLL instead:
-the 130 SM86 kernels and the RTX 30 manifests, the XeSS programs, the XeFG shaders, the tensor-core fatbin, the XeMFG
+the 130 SM86 kernels and the RTX 30 manifests, the XeSS programs, the XeFG shaders, the XeMFG
 Vulkan SPIR-V, and the overlay and input-copy SPIR-V. `tools/linux/extract_inputs.py` checks the zip's SHA-256 before it
 reads anything, refuses any other file, and writes the result once to `~/.cache/mfg-unlocker/inputs/v1.7.1`. Every output is
 checked against the pin its own Windows generator carries. The cache holds Intel-derived programs under Intel's terms
 (see [NOTICE.md](NOTICE.md)); it stays outside the repository. The proxy dispatchers, the ImGui DX12 adaptation, the
 locale catalogs and the DLSS 5 SPIR-V are generated at every configure by the repository's own generators.
 
-A change to `ui_color.frag`, `vk_input_copy.comp`, `xess/port/*.hlsl` or `xess/cuda/xefg_cuda_*` makes the script stop:
-Linux cannot recompile those, so the extracted outputs would no longer match the source.
+A change to `ui_color.frag`, `vk_input_copy.comp` or `xess/port/*.hlsl` makes the script stop: Linux cannot recompile
+those, so the extracted outputs would no longer match the source.
+
+The tensor-core kernels (`xess/cuda/xefg_cuda_layers.cu`, `xefg_cuda_params.h`) are the exception: `build.sh` compiles them
+with `xess/cuda/generate_cuda_layers.py --linux`, using the same `-gencode` set as the Windows build (sm_75, sm_86, sm_89,
+sm_120). The script writes the fatbin, `embedded_xefg_cuda.generated.h` and `embedded_xefg_cuda.rc.in` to
+`build/linux/xefg-cuda`, and CMake takes them from there (`MFG_XEFG_CUDA_INPUTS`) instead of from the extracted inputs.
+The generator pins the compiler (CUDA 13.4.92) and the fatbin's SHA-256 (`PINNED_FATBIN_LINUX`), next to the Windows pins
+(13.2.51 and `PINNED_FATBIN`). A kernel edit changes the fatbin, so the script stops and prints the new digest; update
+the pin only after `tests/xess_cuda` passes with that fatbin. The release fatbin stays in the extracted inputs, for
+comparison, and CMake refuses to embed it: the kernels' parameter block no longer matches the release's. The Windows pin
+was not updated after the kernels changed, so the Windows build stops until someone runs `tests/xess_cuda` there and
+re-pins.
 
 `tools/linux/test.sh` builds the test projects that need no game file or provider DLL with the same toolchain and
 runs them under Wine in `~/.cache/mfg-unlocker/wineprefix`. It prints one line per test: passed, failed, or not runnable
@@ -205,6 +216,22 @@ with the reason. The tests that create a GPU device (a D3D12 or Vulkan device, a
 or NVAPI calls into the installed driver) do not run by default and show as not runnable; set `MFG_TEST_GPU=1` to run
 them, and only with no game or simulator using the GPU. A release_regression case that fails with the built DLL is run
 again with the unmodified v1.7.1 DLL; if that fails too, the case is not runnable here. `build/linux-tests` holds the logs.
+
+`MFG_TEST_PROTON=1` adds the `tests/xess_cuda` cases, run under Proton-FS2024 (the Proton that MSFS 2024 uses) instead of
+plain Wine, as project `xess_cuda_proton`. It is separate from `MFG_TEST_GPU` and needs the same condition: no game or
+simulator using the GPU. `tools/linux/proton_cuda.sh route` does the work. It compiles the kernels from source, builds
+`tests/xess_cuda` with the Linux toolchain and runs every case it defines, plain and ReShade-wrapped, in a throwaway Proton
+prefix at `~/.cache/mfg-unlocker/proton-cuda-prefix`. The script
+refuses to start, and `test.sh` records the project as not runnable, when any process maps a game. ReShade 6.8.0.2155 and
+the AtmosphereMod and RenoDX add-ons are copied from the Witcher 3 and MSFS 2024 installs and checked by SHA-256 first.
+Intel's layer programs are not in the release DLL, so the first run dumps them: it starts the XeSS SDK's frame generation
+sample under Proton for 90 seconds with `VKD3D_SHADER_DUMP_PATH` set, which opens a window briefly, and keeps the programs
+the route recognizes in `~/.cache/mfg-unlocker/intel-programs`. The cases write their output to
+`build/proton-cuda/route/tests/<case>/output.txt`.
+
+Under Proton, vkd3d-proton gives no CUDA object for a buffer view. Under Wine, the route therefore records the GPU
+address of each buffer view XeFG writes, and passes weights, scale and bias to the kernels as addresses. Textures and
+surfaces stay CUDA objects. On Windows nothing changes.
 
 Differences from the release DLL, checked with `tools/linux/compare_dll.py <release.dll> build/linux/MFGUnlocker.dll`:
 
@@ -219,6 +246,6 @@ Differences from the release DLL, checked with `tools/linux/compare_dll.py <rele
 - The DLL is larger than the release (about 10.6 MB against 7.4 MB), and the compiler and linker differ.
 - The DLSS 5 Vulkan SPIR-V group (RCDATA 3905) differs whenever `dlss5.cpp` differs from the release's.
 
-Set `MFG_CACHE`, `MFG_INPUTS_DIR`, `MFG_BUILD_DIR`, `MFG_XWIN`, `MFG_DXC` or `MFG_WINEPREFIX` to move the other paths.
+Set `MFG_CACHE`, `MFG_INPUTS_DIR`, `MFG_BUILD_DIR`, `MFG_XWIN`, `MFG_DXC`, `MFG_NVCC` or `MFG_WINEPREFIX` to move the other paths.
 After a change to `tools/linux/toolchain.cmake`, delete `build/linux` and `build/linux-tests`: CMake keeps the flags from
 the first configure.

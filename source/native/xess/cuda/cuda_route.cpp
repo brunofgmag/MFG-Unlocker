@@ -1,4 +1,5 @@
 #include "cuda_route.h"
+#include "buffer_views.h"
 #include "cuda_layers.h"
 #include "../../adapter_discovery.h"
 #include "../../sha256_util.h"
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -71,6 +73,12 @@ int GuardedObject(NvDescriptorObject object, DescriptorObject* request) noexcept
 {
     __try { return object(request); }
     __except (Faulted(GetExceptionCode())) { return kNvFault; }
+}
+
+bool RunningUnderWine() noexcept
+{
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
 }
 
 bool LoadNvapi(Nvapi& api, std::string& reason)
@@ -209,6 +217,10 @@ std::atomic<bool> gAdoptProviderLists{};
 Status gVulkanStatus;
 std::atomic<bool> gVulkanReported{}, gVulkanLaunched{}, gVulkanActive{};
 std::atomic<bool> gAnyLayer{};
+BufferViews gViews;
+std::atomic<bool> gBuffersByAddress{};
+std::atomic<bool> gTranslatedHandles{};
+std::atomic<int> gWineForced{-1};
 
 size_t Home(const void* key) noexcept
 {
@@ -252,6 +264,8 @@ bool Insert(void* key, uint8_t value) noexcept // under gMutex
 // ID3D12Device2::CreatePipelineState and ID3D12Device4::CreateCommandList1. Command list: the methods that carry
 // compute recording state.
 constexpr int kCreateComputePipelineState = 11, kCreateCommandList = 12, kCreatePipelineState = 47, kCreateCommandList1 = 51;
+constexpr int kCreateConstantBufferView = 17, kCreateShaderResourceView = 18, kCreateUnorderedAccessView = 19,
+    kCopyDescriptors = 23, kCopyDescriptorsSimple = 24;
 constexpr int kReset = 10, kDispatch = 14, kSetPipelineState = 25, kSetDescriptorHeaps = 28,
     kSetComputeRootSignature = 29, kSetComputeRootDescriptorTable = 31, kSetComputeRoot32BitConstant = 33,
     kSetComputeRoot32BitConstants = 35;
@@ -421,9 +435,11 @@ void STDMETHODCALLTYPE HookSetDescriptorHeaps(ID3D12GraphicsCommandList* self, U
 {
     auto& r = Track(self);
     r.heap = nullptr;
+    r.nativeCpuStart = {};
     if (gActive.load(std::memory_order_relaxed) && heaps)
         for (UINT i = 0; i < count && i < 2; ++i)
             if (heaps[i] && heaps[i]->GetDesc().Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) r.heap = heaps[i];
+    if (r.heap) r.nativeCpuStart = r.heap->GetCPUDescriptorHandleForHeapStart();
     ListOriginal<SetDescriptorHeapsFn>(self, kSetDescriptorHeaps)(self, count, heaps);
 }
 void STDMETHODCALLTYPE HookSetComputeRootSignature(ID3D12GraphicsCommandList* self, ID3D12RootSignature* signature)
@@ -457,7 +473,7 @@ void STDMETHODCALLTYPE HookSetComputeRoot32BitConstants(ID3D12GraphicsCommandLis
 }
 
 // Each reason is logged once, with the layer that met it first.
-enum Reason : uint32_t { kShape = 1, kBindings = 2, kConstants = 4, kHeap = 8, kObject = 16, kLaunch = 32 };
+enum Reason : uint32_t { kShape = 1, kBindings = 2, kConstants = 4, kHeap = 8, kObject = 16, kLaunch = 32, kBufferAddress = 64, kHandleFormat = 128 };
 std::atomic<uint32_t> gReasonsLogged{};
 void Fallback(Reason reason, const char* text, const Layer& layer) noexcept
 {
@@ -470,6 +486,41 @@ void Fallback(Reason reason, const char* text, const Layer& layer) noexcept
 // A fault inside the driver while recording turns the route off for the rest of the session; this
 // Dispatch and every later one run the DXIL port.
 std::atomic<bool> gFaultLogged{};
+std::atomic<bool> gObjectFailureLogged{};
+std::string SlotMap(const D3D12_GPU_DESCRIPTOR_HANDLE (&tables)[2], uint64_t gpuStart, uint64_t cpuStart, uint64_t count)
+{
+    std::string map;
+    for (int t = 0; t < 2; ++t)
+    {
+        if (tables[t].ptr < gpuStart) continue;
+        const uint64_t base = (tables[t].ptr - gpuStart)/gIncrement;
+        map += (t ? ",\"t1_" : "\"t0_") + std::to_string(base) + "\":\"";
+        for (uint64_t i = base; i < base + 8 && i < count; ++i)
+            for (const int type : {kTextureObject, kSurfaceObject})
+            {
+                DescriptorObject query{sizeof(DescriptorObject), 0, gDevice, type, {SIZE_T(cpuStart + i*gIncrement)}, 0};
+                const int code = GuardedObject(gNvapi.object, &query);
+                map += std::string(type == kTextureObject ? " t" : " s") + std::to_string(code) + (query.handle ? "+" : "0");
+            }
+        map += "\"";
+    }
+    return map;
+}
+void ObjectFailure(const char* stage, int result, int type, uint64_t table, uint64_t gpuStart, uint64_t cpuStart,
+    uint64_t descriptor, const std::string& slots = {}) noexcept
+{
+    if (gObjectFailureLogged.exchange(true)) return;
+    try
+    {
+        char fields[256]{};
+        snprintf(fields, sizeof(fields),
+            "\"stage\":\"%s\",\"result\":%d,\"type\":%d,\"table\":\"0x%llx\",\"gpu_start\":\"0x%llx\",\"cpu_start\":\"0x%llx\",\"descriptor\":\"0x%llx\",\"increment\":%u",
+            stage, result, type, static_cast<unsigned long long>(table), static_cast<unsigned long long>(gpuStart),
+            static_cast<unsigned long long>(cpuStart), static_cast<unsigned long long>(descriptor), gIncrement);
+        Log("cuda_descriptor_object", slots.empty() ? std::string(fields) : std::string(fields) + "," + slots);
+    }
+    catch (...) {}
+}
 void RuntimeFault(const char* where) noexcept
 {
     gActive.store(false, std::memory_order_release);
@@ -483,6 +534,85 @@ void RuntimeFault(const char* where) noexcept
     catch (...) {}
 }
 
+struct HeapAccess
+{
+    const ListState& state;
+    D3D12_DESCRIPTOR_HEAP_DESC desc;
+    D3D12_GPU_DESCRIPTOR_HANDLE gpuStart;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuStart;
+};
+
+bool DescriptorIndex(const HeapAccess& heap, D3D12_GPU_DESCRIPTOR_HANDLE table, uint32_t offset, int type, uint64_t& index) noexcept
+{
+    if (table.ptr < heap.gpuStart.ptr || (table.ptr - heap.gpuStart.ptr) % gIncrement)
+    { ObjectFailure("table_outside_heap", 0, type, table.ptr, heap.gpuStart.ptr, heap.cpuStart.ptr, 0); return false; }
+    index = (table.ptr - heap.gpuStart.ptr)/gIncrement + offset;
+    if (index >= heap.desc.NumDescriptors)
+    { ObjectFailure("index_past_heap", 0, type, table.ptr, heap.gpuStart.ptr, heap.cpuStart.ptr, 0); return false; }
+    return true;
+}
+
+std::string FirstFailureSlots(const HeapAccess& heap) noexcept
+{
+    if (gObjectFailureLogged.load()) return {};
+    try { return SlotMap(heap.state.tables, heap.gpuStart.ptr, heap.cpuStart.ptr, heap.desc.NumDescriptors); }
+    catch (...) { return {}; }
+}
+
+bool Object(const HeapAccess& heap, D3D12_GPU_DESCRIPTOR_HANDLE table, uint32_t offset, int type, uint64_t& handle, int& result) noexcept
+{
+    uint64_t index{};
+    result = 0;
+    if (!DescriptorIndex(heap, table, offset, type, index)) return false;
+    DescriptorObject request{sizeof(DescriptorObject), 0, gDevice, type, {SIZE_T(heap.cpuStart.ptr + index*gIncrement)}, 0};
+    result = GuardedObject(gNvapi.object, &request);
+    if (result == kNvFault) RuntimeFault("descriptor_object");
+    if (result == 0 && request.handle) { handle = request.handle; return true; }
+    ObjectFailure("nvapi", result, type, table.ptr, heap.gpuStart.ptr, heap.cpuStart.ptr, request.descriptor.ptr, FirstFailureSlots(heap));
+    return false;
+}
+
+bool BufferAddress(const HeapAccess& heap, uint32_t offset, uint64_t& address) noexcept
+{
+    uint64_t index{};
+    if (!heap.state.nativeCpuStart.ptr || !DescriptorIndex(heap, heap.state.tables[1], offset, kTextureObject, index)) return false;
+    const D3D12_CPU_DESCRIPTOR_HANDLE handle{SIZE_T(heap.state.nativeCpuStart.ptr + index*gIncrement)};
+    return gViews.Find(handle, address);
+}
+
+enum class Buffers { Filled, Failed, NoAddress };
+
+Buffers FillBuffers(const HeapAccess& heap, XefgCudaParams& params) noexcept
+{
+    uint64_t* const slots[3] = {&params.weights, &params.scale, &params.bias};
+    const bool addressesAllowed = UnderWine();
+    if (!addressesAllowed || !gBuffersByAddress.load(std::memory_order_relaxed))
+    {
+        int result = 0;
+        bool objects = true;
+        for (uint32_t i = 0; i < 3 && objects; ++i) objects = Object(heap, heap.state.tables[1], i, kTextureObject, *slots[i], result);
+        if (objects) return Buffers::Filled;
+        if (result == kNvFault || !addressesAllowed) return Buffers::Failed;
+    }
+    uint64_t addresses[3]{};
+    for (uint32_t i = 0; i < 3; ++i)
+        if (!BufferAddress(heap, i, addresses[i])) return Buffers::NoAddress;
+    for (uint32_t i = 0; i < 3; ++i) *slots[i] = addresses[i];
+    params.bufferMode = kBufferAddresses;
+    if (!gBuffersByAddress.exchange(true))
+        try { Log("cuda_buffers", "\"mode\":\"address\""); } catch (...) {}
+    return Buffers::Filled;
+}
+
+bool FillImages(const HeapAccess& heap, const Layer& layer, XefgCudaParams& params) noexcept
+{
+    const auto& tables = heap.state.tables;
+    int result{};
+    return Object(heap, tables[0], 0, kTextureObject, params.input, result)
+        && (layer.family != Family::Decoder || Object(heap, tables[0], 1, kTextureObject, params.skip, result))
+        && Object(heap, tables[0], layer.family == Family::Flow ? 1 : 2, kSurfaceObject, params.output, result);
+}
+
 // The layer's Dispatch as a CUDA launch on the same descriptors. False keeps the Dispatch.
 bool Launch(ID3D12GraphicsCommandList* list, const ListState& r, UINT x, UINT y, UINT z) noexcept
 {
@@ -490,31 +620,19 @@ bool Launch(ID3D12GraphicsCommandList* list, const ListState& r, UINT x, UINT y,
     if (!DispatchShapeOk(layer, x, y, z)) { Fallback(kShape, "dispatch_shape", layer); return false; }
     if ((r.tableMask & 3u) != 3u || !r.heap) { Fallback(kBindings, "bindings_incomplete", layer); return false; }
     if ((r.constantMask & layer.constants) != layer.constants) { Fallback(kConstants, "constants_incomplete", layer); return false; }
-    const D3D12_DESCRIPTOR_HEAP_DESC heap = r.heap->GetDesc();
-    if (heap.Type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV || !(heap.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE))
+    const HeapAccess heap{r, r.heap->GetDesc(), r.heap->GetGPUDescriptorHandleForHeapStart(), r.heap->GetCPUDescriptorHandleForHeapStart()};
+    if (heap.desc.Type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV || !(heap.desc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE))
     { Fallback(kHeap, "heap_type", layer); return false; }
-    const auto gpuStart = r.heap->GetGPUDescriptorHandleForHeapStart();
-    const auto cpuStart = r.heap->GetCPUDescriptorHandleForHeapStart();
-    auto object = [&](D3D12_GPU_DESCRIPTOR_HANDLE table, uint32_t offset, int type, uint64_t& handle) {
-        if (table.ptr < gpuStart.ptr || (table.ptr - gpuStart.ptr) % gIncrement) return false;
-        const uint64_t index = (table.ptr - gpuStart.ptr)/gIncrement + offset;
-        if (index >= heap.NumDescriptors) return false;
-        DescriptorObject request{sizeof(DescriptorObject), 0, gDevice, type, {SIZE_T(cpuStart.ptr + index*gIncrement)}, 0};
-        const int result = GuardedObject(gNvapi.object, &request);
-        if (result == kNvFault) RuntimeFault("descriptor_object");
-        if (result != 0 || !request.handle) return false;
-        handle = request.handle;
-        return true;
-    };
+    if (gTranslatedHandles.load(std::memory_order_relaxed) && heap.cpuStart.ptr == r.nativeCpuStart.ptr)
+    { Fallback(kHandleFormat, "heap_handle", layer); return false; }
     XefgCudaParams params{};
-    const bool flow = layer.family == Family::Flow;
-    if (!object(r.tables[0], 0, kTextureObject, params.input)
-        || (layer.family == Family::Decoder && !object(r.tables[0], 1, kTextureObject, params.skip))
-        || !object(r.tables[0], flow ? 1 : 2, kSurfaceObject, params.output)
-        || !object(r.tables[1], 0, kTextureObject, params.weights)
-        || !object(r.tables[1], 1, kTextureObject, params.scale)
-        || !object(r.tables[1], 2, kTextureObject, params.bias))
-    { Fallback(kObject, "descriptor_object", layer); return false; }
+    if (!FillImages(heap, layer, params)) { Fallback(kObject, "descriptor_object", layer); return false; }
+    switch (FillBuffers(heap, params))
+    {
+    case Buffers::Filled: break;
+    case Buffers::Failed: Fallback(kObject, "descriptor_object", layer); return false;
+    case Buffers::NoAddress: Fallback(kBufferAddress, "buffer_address", layer); return false;
+    }
     uint32_t gridX{}, gridY{};
     FillLaunch(layer, x, y, r.constants, params, gridX, gridY);
     const int launched = GuardedLaunch(gNvapi.launch, list, gKernels[layer.kernel], gridX, gridY, layer.gridZ, &params, sizeof(params));
@@ -1080,6 +1198,54 @@ HRESULT STDMETHODCALLTYPE HookCreatePipelineState(ID3D12Device2* self, const D3D
     return result;
 }
 
+using CreateShaderResourceViewFn = void (STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, const D3D12_SHADER_RESOURCE_VIEW_DESC*,
+    D3D12_CPU_DESCRIPTOR_HANDLE);
+using CreateConstantBufferViewFn = void (STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_CONSTANT_BUFFER_VIEW_DESC*,
+    D3D12_CPU_DESCRIPTOR_HANDLE);
+using CreateUnorderedAccessViewFn = void (STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, ID3D12Resource*,
+    const D3D12_UNORDERED_ACCESS_VIEW_DESC*, D3D12_CPU_DESCRIPTOR_HANDLE);
+using CopyDescriptorsFn = void (STDMETHODCALLTYPE*)(ID3D12Device*, UINT, const D3D12_CPU_DESCRIPTOR_HANDLE*, const UINT*, UINT,
+    const D3D12_CPU_DESCRIPTOR_HANDLE*, const UINT*, D3D12_DESCRIPTOR_HEAP_TYPE);
+using CopyDescriptorsSimpleFn = void (STDMETHODCALLTYPE*)(ID3D12Device*, UINT, D3D12_CPU_DESCRIPTOR_HANDLE,
+    D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_DESCRIPTOR_HEAP_TYPE);
+
+void STDMETHODCALLTYPE HookCreateShaderResourceView(ID3D12Device* self, ID3D12Resource* resource,
+    const D3D12_SHADER_RESOURCE_VIEW_DESC* desc, D3D12_CPU_DESCRIPTOR_HANDLE destination)
+{
+    DeviceOriginal<CreateShaderResourceViewFn>(self, kCreateShaderResourceView)(self, resource, desc, destination);
+    try { gViews.WriteView(tPipelineToken, destination, desc, [resource] { return resource ? resource->GetGPUVirtualAddress() : 0; }); }
+    catch (...) {}
+}
+void STDMETHODCALLTYPE HookCreateConstantBufferView(ID3D12Device* self, const D3D12_CONSTANT_BUFFER_VIEW_DESC* desc,
+    D3D12_CPU_DESCRIPTOR_HANDLE destination)
+{
+    DeviceOriginal<CreateConstantBufferViewFn>(self, kCreateConstantBufferView)(self, desc, destination);
+    try { gViews.Erase(tPipelineToken, destination); } catch (...) {}
+}
+void STDMETHODCALLTYPE HookCreateUnorderedAccessView(ID3D12Device* self, ID3D12Resource* resource, ID3D12Resource* counter,
+    const D3D12_UNORDERED_ACCESS_VIEW_DESC* desc, D3D12_CPU_DESCRIPTOR_HANDLE destination)
+{
+    DeviceOriginal<CreateUnorderedAccessViewFn>(self, kCreateUnorderedAccessView)(self, resource, counter, desc, destination);
+    try { gViews.Erase(tPipelineToken, destination); } catch (...) {}
+}
+void STDMETHODCALLTYPE HookCopyDescriptors(ID3D12Device* self, UINT destinationCount, const D3D12_CPU_DESCRIPTOR_HANDLE* destinations,
+    const UINT* destinationSizes, UINT sourceCount, const D3D12_CPU_DESCRIPTOR_HANDLE* sources, const UINT* sourceSizes,
+    D3D12_DESCRIPTOR_HEAP_TYPE type)
+{
+    DeviceOriginal<CopyDescriptorsFn>(self, kCopyDescriptors)(self, destinationCount, destinations, destinationSizes, sourceCount,
+        sources, sourceSizes, type);
+    if (type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) return;
+    try { gViews.CopyRanges(tPipelineToken, destinationCount, destinations, destinationSizes, sourceCount, sources, sourceSizes, gIncrement); }
+    catch (...) {}
+}
+void STDMETHODCALLTYPE HookCopyDescriptorsSimple(ID3D12Device* self, UINT count, D3D12_CPU_DESCRIPTOR_HANDLE destination,
+    D3D12_CPU_DESCRIPTOR_HANDLE source, D3D12_DESCRIPTOR_HEAP_TYPE type)
+{
+    DeviceOriginal<CopyDescriptorsSimpleFn>(self, kCopyDescriptorsSimple)(self, count, destination, source, type);
+    if (type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) return;
+    try { gViews.CopySimple(tPipelineToken, destination, source, count, gIncrement); } catch (...) {}
+}
+
 // Every distinct vtable of the device's interfaces, with the highest interface level it serves.
 template <class Interface>
 void AddDeviceVtable(ID3D12Device* device, int level, std::vector<std::pair<void**, int>>& out)
@@ -1089,6 +1255,13 @@ void AddDeviceVtable(ID3D12Device* device, int level, std::vector<std::pair<void
     void** vtable = *reinterpret_cast<void***>(view.Get());
     for (auto& entry : out) if (entry.first == vtable) { entry.second = (std::max)(entry.second, level); return; }
     out.emplace_back(vtable, level);
+}
+
+size_t DeviceHookCount(int level) noexcept
+{
+    constexpr size_t kDeviceHooks = 7, kDevice2Hooks = 8, kDevice4Hooks = 9;
+    if (level >= 4) return kDevice4Hooks;
+    return level >= 2 ? kDevice2Hooks : kDeviceHooks;
 }
 
 bool PatchDevice(ID3D12Device* device, std::string& reason)
@@ -1111,10 +1284,15 @@ bool PatchDevice(ID3D12Device* device, std::string& reason)
     // ID3D12Device2 adds CreatePipelineState (streams), ID3D12Device4 CreateCommandList1.
     const Hook hooks[] = {{kCreateComputePipelineState, reinterpret_cast<void*>(&HookCreateComputePipelineState)},
         {kCreateCommandList, reinterpret_cast<void*>(&HookCreateCommandList)},
+        {kCreateConstantBufferView, reinterpret_cast<void*>(&HookCreateConstantBufferView)},
+        {kCreateShaderResourceView, reinterpret_cast<void*>(&HookCreateShaderResourceView)},
+        {kCreateUnorderedAccessView, reinterpret_cast<void*>(&HookCreateUnorderedAccessView)},
+        {kCopyDescriptors, reinterpret_cast<void*>(&HookCopyDescriptors)},
+        {kCopyDescriptorsSimple, reinterpret_cast<void*>(&HookCopyDescriptorsSimple)},
         {kCreatePipelineState, reinterpret_cast<void*>(&HookCreatePipelineState)},
         {kCreateCommandList1, reinterpret_cast<void*>(&HookCreateCommandList1)}};
     for (const auto& [vtable, level] : vtables)
-        if (!ApplyDevice(vtable, std::span<const Hook>(hooks, level >= 4 ? 4 : level >= 2 ? 3 : 2)))
+        if (!ApplyDevice(vtable, std::span<const Hook>(hooks, DeviceHookCount(level))))
         { reason = "device_patch"; return false; }
     return true;
 }
@@ -1197,6 +1375,7 @@ bool Install(ID3D12Device* device, HMODULE providerModule, std::span<const unsig
                 || !ProviderRange(wrapper, gWrapperBegin, gWrapperEnd))
             { MarkUnavailable("wrapper_image"); reason = gReason; return false; }
             Log("cuda_route_device", "\"owner\":\"" + owner + "\",\"native\":\"" + how + "\"");
+            gTranslatedHandles.store(UnderWine() && GetProcAddress(wrapper, "ReShadeRegisterAddon") != nullptr, std::memory_order_relaxed);
         }
         device = native.Get(); // from here on, the runtime's device
         // The runtime's image (kept mapped: the device lives on), whose class tables a list may keep.
@@ -1285,6 +1464,7 @@ void ForgetLayers() noexcept
     gHeld.clear();
     gPipelineGeneration.fetch_add(1, std::memory_order_release);
     gLayerCount.store(0, std::memory_order_relaxed);
+    gViews.Clear();
     // The provider's lists' own tables get their originals back and the lists are released.
     for (auto& table : gTables) Retire(table);
 }
@@ -1356,6 +1536,15 @@ bool AdapterCapability(const LUID& luid, int& major, int& minor, std::string& na
     try { return Capability(luid, major, minor, name); } catch (...) { return false; }
 }
 uint64_t NewPipelineToken() noexcept { return gNextPipelineToken.fetch_add(1, std::memory_order_relaxed); }
+bool UnderWine() noexcept
+{
+    const int forced = gWineForced.load(std::memory_order_relaxed);
+    if (forced >= 0) return forced != 0;
+    static const bool detected = RunningUnderWine();
+    return detected;
+}
+size_t BufferViewCount() noexcept { return gViews.Size(); }
+void ForceWine(std::optional<bool> answer) noexcept { gWineForced.store(answer ? int(*answer) : -1, std::memory_order_relaxed); }
 PipelineScope::PipelineScope(uint64_t token) noexcept : previous_(tPipelineToken) { tPipelineToken = token; }
 PipelineScope::~PipelineScope() { tPipelineToken = previous_; }
 void ForgetPipelines(uint64_t token) noexcept
@@ -1375,6 +1564,7 @@ void ForgetPipelines(uint64_t token) noexcept
     for (const auto& held : gHeld) Insert(held.state, held.layer);
     gLayerCount.store(uint32_t(gHeld.size()), std::memory_order_relaxed);
     gAnyLayer.store(!gHeld.empty(), std::memory_order_release);
+    if (gHeld.empty()) gViews.Clear();
     gPipelineGeneration.fetch_add(1, std::memory_order_release);
     for (size_t i = 0; i < count; ++i) removed[i]->Release();
 }

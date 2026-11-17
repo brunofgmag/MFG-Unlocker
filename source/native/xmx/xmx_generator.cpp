@@ -3,6 +3,7 @@
 #include "xmx_hud_composite.h"
 #include "xmx_policy.h"
 #include "xmx_status.h"
+#include "xmx_tensor_cores.h"
 #include "tag_states.h"
 #include <dxgi1_4.h>
 #include <wrl/client.h>
@@ -404,14 +405,14 @@ bool LocalMemory(LUID luid, DXGI_QUERY_VIDEO_MEMORY_INFO& info)
 bool NewContext(State& state)
 {
     std::string failure;
-    if (context::Create(state.pair.fg, *state.pair.rvas, state.device.Get(), state.context, failure)) return true;
+    if (tensor_cores::Create(state.pair.fg, *state.pair.rvas, state.device.Get(), state.context, failure)) return true;
     status::Fail(failure);
     return false;
 }
 
 int InitializeContext(State& state, InitParams& init)
 {
-    const auto result = context::Initialize(state.pair.fg, *state.pair.rvas, state.context, init);
+    const auto result = tensor_cores::Initialize(state.pair.fg, *state.pair.rvas, state.context, init);
     Log("init " + std::to_string(init.width) + "x" + std::to_string(init.height) + " format "
         + std::to_string(init.format) + " flags " + std::to_string(init.flags) + " frames "
         + std::to_string(init.maxFrames) + " result " + std::to_string(result));
@@ -614,7 +615,8 @@ std::string SummaryText(const Summary& summary, const NVSDK_NGX_Parameter* param
         + "; mv scale " + std::to_string(Value<float>(params, "DLSSG.MvecScaleX", 0.f)) + ","
         + std::to_string(Value<float>(params, "DLSSG.MvecScaleY", 0.f)) + " reset "
         + std::to_string(Value<unsigned int>(params, "DLSSG.Reset", 0)) + " frames "
-        + std::to_string(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 0)) + "; " + CostText();
+        + std::to_string(Value<unsigned int>(params, "DLSSG.MultiFrameCount", 0)) + "; " + CostText() + "; "
+        + tensor_cores::SummaryText();
 }
 
 void Summarize(const NVSDK_NGX_Parameter* params, bool generated, policy::Idle idle)
@@ -962,7 +964,7 @@ Outcome ExecuteModel(State& state, ID3D12GraphicsCommandList* list, const policy
     execute.frameCount = 1;
     const bool composesHud = ComposesHud(state, next, previous);
     if (composesHud) FeedHudless(execute, next, previous);
-    const auto result = context::Execute(state.pair.fg, *state.pair.rvas, state.context, list, execute);
+    const auto result = tensor_cores::Execute(state.pair.fg, *state.pair.rvas, state.context, list, execute);
     if (result < 0)
     {
         Log("execute failed: " + std::to_string(result));

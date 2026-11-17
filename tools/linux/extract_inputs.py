@@ -21,6 +21,7 @@ RELEASE_VERSION = "v1.7.1"
 RELEASE_ZIP_SHA256 = "c85cb2a9e74f39be744fada4a1a75d72c606f73315114f334ad7755a3a13005d"
 RELEASE_DLL_NAME = "MFGUnlocker.dll"
 RELEASE_DLL_SHA256 = "5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74"
+RELEASE_CUDA_FATBIN_SHA256 = "2ffae52e7878ae7e374ff953b864204f079c3199dc904b2ce7ecf8b37ee130f7"
 PLACEHOLDER = "@MFG_PREGENERATED_INPUTS@"
 
 UPPER_SHA = rb"[0-9A-F]{64}"
@@ -56,8 +57,6 @@ SOURCE_PINS = {
     "ui_color.frag": "4747aafbef6db4bc074547aab6bdc04dab336985e058621f3a2d895a420fa950",
     "xess/port/splat_motion_aware.hlsl": "4c172018c46bb0182fb998f3fa08bb1e7ef00a2edabb263d42b2a888739b8787",
     "xess/port/unet_conv.hlsl": "ca09a0d96f9233c95c103312522ad77e81c2e075059743030109781b6e6b3c00",
-    "xess/cuda/xefg_cuda_layers.cu": "b1094f1c3b1ea08bcbae9eaad3050fb91cd7ffcf6d612268621072bf6f4e9a5f",
-    "xess/cuda/xefg_cuda_params.h": "b520c18b841ac88d3c217e8e9a4c6f642a92ccdeaef002289370ee871f8c2adb",
     "xess/vulkan/vk_input_copy.comp": "090471caa0da37ee6bc1ed91111591f6be414be82f492e13e8cf0788dcdf82e2",
     "rtx_hair/vk_common.glsl": "a6624b221f877e59ed1f1e617a9cded1e9ea169f8628567d576d162c494a799d",
     "rtx_hair/vk_dots_converter.comp": "25af91fd5114c812673059803f26d04dc5df187c358712c6a664258143c9e434",
@@ -147,9 +146,6 @@ class RepoPins:
 
     def xvk_manifest(self):
         return self.constant("xess/vulkan/generate_xvk_programs.py", "MANIFEST_SHA256")
-
-    def cuda_fatbin(self):
-        return self.constant("xess/cuda/generate_cuda_layers.py", "PINNED_FATBIN")
 
 
 def read_release_dll(zip_path):
@@ -651,7 +647,7 @@ def verify_xess_programs(root, pins):
 def verify_xess_shaders(root, pins):
     for name, pinned in pins.xess_shaders():
         expect_digest(root / f"pregenerated/xess_shaders/{name}.dxil", pinned)
-    expect_digest(root / "pregenerated/xess_cuda/xefg_cuda_layers.fatbin", pins.cuda_fatbin())
+    expect_digest(root / "pregenerated/xess_cuda/xefg_cuda_layers.fatbin", RELEASE_CUDA_FATBIN_SHA256)
 
 
 def verify_xvk(root):

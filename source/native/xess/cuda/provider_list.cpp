@@ -1,14 +1,38 @@
 #include "provider_list.h"
+#include "../../overlay_native.h"
 #include <cstring>
 #include <cstdio>
 
 namespace xefg_cuda
 {
+namespace
+{
+template<class T> Microsoft::WRL::ComPtr<T> NativeOf(T* object) noexcept
+{
+    Microsoft::WRL::ComPtr<T> native;
+    if (!UnderWine() || !single_overlay::native::Unwrap(object, native) || !native) native = object;
+    return native;
+}
+ID3D12DescriptorHeap* ViewHeap(UINT count, ID3D12DescriptorHeap* const* heaps) noexcept
+{
+    ID3D12DescriptorHeap* view{};
+    if (!heaps) return view;
+    for (UINT i = 0; i < count && i < 2; ++i)
+        if (heaps[i] && heaps[i]->GetDesc().Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) view = heaps[i];
+    return view;
+}
+D3D12_CPU_DESCRIPTOR_HANDLE NativeCpuStart(ID3D12DescriptorHeap* heap) noexcept
+{
+    if (!heap) return {};
+    return NativeOf(heap)->GetCPUDescriptorHandleForHeapStart();
+}
+}
 bool ProviderList::Bind(ID3D12GraphicsCommandList* real) noexcept
 {
     Unbind(); state_ = {}; escaped_ = false;
     std::string reason;
-    if (disabled_ || !CanRecord(real, reason))
+    auto launch = NativeOf(real);
+    if (disabled_ || !CanRecord(launch.Get(), reason))
     {
         try {
             if (disabled_) reason = "disabled";
@@ -20,16 +44,19 @@ bool ProviderList::Bind(ID3D12GraphicsCommandList* real) noexcept
         return false;
     }
     real_ = real; real_->AddRef();
+    launch_ = std::move(launch);
     real_->QueryInterface(IID_PPV_ARGS(&list2_));
     if (!loggedBind_) {
         loggedBind_ = true;
-        try { Report("cuda_provider_list", "\"state\":\"bound\",\"table\":\"" + reason + "\""); } catch (...) {}
+        const char* wrapped = launch_.Get() != real_ ? "true" : "false";
+        try { Report("cuda_provider_list", "\"state\":\"bound\",\"table\":\"" + reason + "\",\"wrapped\":" + wrapped); } catch (...) {}
     }
     return true;
 }
 void ProviderList::Unbind() noexcept
 {
     list2_.Reset();
+    launch_.Reset();
     if (real_) real_->Release();
     real_ = nullptr; state_ = {};
 }
@@ -127,7 +154,7 @@ void STDMETHODCALLTYPE ProviderList::DrawIndexedInstanced(UINT IndexCountPerInst
 void STDMETHODCALLTYPE ProviderList::Dispatch(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ)
 {
     if (!real_) return;
-    if (state_.layer && !escaped_ && LaunchOn(real_, state_, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) return;
+    if (state_.layer && !escaped_ && LaunchOn(launch_.Get(), state_, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) return;
         real_->Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 }
 
@@ -213,9 +240,8 @@ void STDMETHODCALLTYPE ProviderList::ExecuteBundle(ID3D12GraphicsCommandList *pC
 void STDMETHODCALLTYPE ProviderList::SetDescriptorHeaps(UINT NumDescriptorHeaps, ID3D12DescriptorHeap *const *ppDescriptorHeaps)
 {
     if (!real_) return;
-    state_.heap = nullptr; state_.tableMask = 0;
-        if (ppDescriptorHeaps) for (UINT i = 0; i < NumDescriptorHeaps && i < 2; ++i)
-            if (ppDescriptorHeaps[i] && ppDescriptorHeaps[i]->GetDesc().Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) state_.heap = ppDescriptorHeaps[i];
+    state_.heap = ViewHeap(NumDescriptorHeaps, ppDescriptorHeaps); state_.tableMask = 0;
+    state_.nativeCpuStart = NativeCpuStart(state_.heap);
         real_->SetDescriptorHeaps(NumDescriptorHeaps, ppDescriptorHeaps);
 }
 

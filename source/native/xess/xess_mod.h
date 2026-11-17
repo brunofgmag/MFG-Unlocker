@@ -12,6 +12,7 @@ namespace xess_mod
 {
 std::span<const unsigned char> TensorCoreFatbin();
 void InstallProviderTensorCores(HMODULE provider, ID3D12Device* device) noexcept;
+bool InstallMultiFrameTensorCores(HMODULE fg, ID3D12Device* device) noexcept;
 struct Snapshot
 {
     bool importsInstalled = false;

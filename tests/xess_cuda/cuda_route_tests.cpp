@@ -21,7 +21,7 @@
 //
 //   XefgCudaRouteTests --fatbin FILE --programs DIR [--programs DIR ...]
 //       [--list create|create1] [--expect-agility] [--wrapped-device] [--expect-wrapper] [--dred] [--expect-class-table]
-//       [--recorder [--stream] [--strict]] [--wrapper-stream-subobject]
+//       [--recorder [--stream] [--strict]] [--wrapper-stream-subobject] [--wine-off]
 // --dred: DRED auto-breadcrumbs and page-fault reporting forced on before the device is created, as Wuthering Waves
 // runs. An Agility runtime then keeps each list on its class table in the runtime's image; --expect-class-table
 // requires that runtime beside the executable, the recording list on that image table, and the route's
@@ -41,12 +41,15 @@
 // be recognized, the one cuda_pso_refused line must name the recorder as the first frame after the wrapper's, and a
 // routed Dispatch must keep Intel's program. --wrapper-stream-subobject: XefgPsoWrapper.dll
 // passes compute pipelines on as streams with a default SAMPLE_MASK subobject: not recognized, logged once with its type.
+// --wine-off: the route's Wine detection forced off, as on Windows: no buffer view travels as an address, so under Wine
+// the Dispatch keeps Intel's program and no address mode is logged; on Windows the layer launches.
 // DIR: DXIL programs (any file names); each layer's program (and own program) is found by its SHA-256.
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
 #include "xess/cuda/cuda_route.h"
+#include "xess/cuda/provider_list.h"
 #include "sha256_util.h"
 #include "cuda_cases.h"
 #include <cstdio>
@@ -59,6 +62,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -91,11 +95,14 @@ std::string Sha256(const std::vector<uint8_t>& bytes)
 using namespace xefg_cuda_cases;
 
 // ---- D3D12 ------------------------------------------------------------------------------------------------
+constexpr uint64_t kDecoyBytes = 64ull << 20;
 struct Gpu
 {
     ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue; ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> list; ComPtr<ID3D12Fence> fence; uint64_t value{}; HANDLE event{};
-    ComPtr<ID3D12DescriptorHeap> heap; UINT inc{};
+    ComPtr<ID3D12DescriptorHeap> heap, hidden; UINT inc{};
+    uint64_t token{xefg_cuda::NewPipelineToken()}; unsigned variant{}; xefg_cuda::ProviderList* proxy{};
+    ComPtr<ID3D12Resource> decoy;
     Gpu()
     {
         ComPtr<IDXGIFactory4> factory; Check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "factory");
@@ -115,6 +122,9 @@ struct Gpu
         D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; hd.NumDescriptors = 64;
         hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         Check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&heap)), "heap");
+        decoy = Buffer(kDecoyBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        hd.NumDescriptors = 8; hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        Check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&hidden)), "hidden heap");
         inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
     // The recording list, open on the allocator (created as the provider creates its lists).
@@ -189,6 +199,32 @@ struct Gpu
         staging.push_back(up);
     }
     D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT i) { auto h = heap->GetCPUDescriptorHandleForHeapStart(); h.ptr += SIZE_T(i)*inc; return h; }
+    D3D12_CPU_DESCRIPTOR_HANDLE HiddenCpu(UINT i) { auto h = hidden->GetCPUDescriptorHandleForHeapStart(); h.ptr += SIZE_T(i)*inc; return h; }
+    void WriteDecoy(D3D12_CPU_DESCRIPTOR_HANDLE h)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC v{}; v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        v.Format = DXGI_FORMAT_UNKNOWN; v.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        v.Buffer.NumElements = UINT(kDecoyBytes/16); v.Buffer.StructureByteStride = 16;
+        device->CreateShaderResourceView(decoy.Get(), &v, h);
+    }
+    enum class Publish { Direct, CopySimple, CopyRanges };
+    Publish published{};
+    template <class Write> void WriteBuffers(UINT first, Write&& write)
+    {
+        const Publish how = Publish(variant++ % 3);
+        published = how;
+        const bool direct = how == Publish::Direct;
+        if (!direct) for (UINT i = 0; i < 3; ++i) WriteDecoy(Cpu(first + i));
+        for (UINT i = 0; i < 3; ++i) write(i, direct ? Cpu(first + i) : HiddenCpu(i));
+        const auto type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        if (how == Publish::CopySimple) device->CopyDescriptorsSimple(3, Cpu(first), HiddenCpu(0), type);
+        if (how == Publish::CopyRanges)
+        {
+            const D3D12_CPU_DESCRIPTOR_HANDLE destination = Cpu(first), sources[3] = {HiddenCpu(0), HiddenCpu(1), HiddenCpu(2)};
+            const UINT size = 3;
+            device->CopyDescriptors(1, &destination, &size, 3, sources, nullptr, type);
+        }
+    }
     D3D12_GPU_DESCRIPTOR_HANDLE GpuHandle(UINT i) { auto h = heap->GetGPUDescriptorHandleForHeapStart(); h.ptr += UINT64(i)*inc; return h; }
 };
 void Barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to)
@@ -263,22 +299,28 @@ std::vector<uint32_t> Run(Gpu& g, const Spec& s, const Case& c, Program& program
     };
     D3D12_UNORDERED_ACCESS_VIEW_DESC uav{}; uav.Format = Gpu::Format(c.components); uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
     uav.Texture2DArray.ArraySize = c.outSlices;
-    srvTexture(0, g.Cpu(t0));
-    if (s.family == Family::Flow) g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 1));
-    else { srvTexture(4, g.Cpu(t0 + 1)); g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 2)); }
-    for (uint32_t i = 0; i < 3; ++i) srvBuffer(1 + i, g.Cpu(t1 + i));
+    {
+        xefg_cuda::PipelineScope scope(g.token);
+        srvTexture(0, g.Cpu(t0));
+        if (s.family == Family::Flow) g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 1));
+        else { srvTexture(4, g.Cpu(t0 + 1)); g.device->CreateUnorderedAccessView(output.Get(), nullptr, &uav, g.Cpu(t0 + 2)); }
+        g.WriteBuffers(t1, [&](UINT i, D3D12_CPU_DESCRIPTOR_HANDLE h) { srvBuffer(1 + i, h); });
+    }
 
+    ID3D12GraphicsCommandList* const record = g.proxy && !split ? g.proxy->Interface() : g.list.Get();
+    if (record != g.list.Get() && !g.proxy->Bind(g.list.Get())) throw std::runtime_error("the provider list refused the recording list");
     auto bind = [&] {
         ID3D12DescriptorHeap* heaps[] = {g.heap.Get()};
-        g.list->SetDescriptorHeaps(1, heaps);
-        g.list->SetComputeRootSignature(program.root.Get());
-        g.list->SetComputeRootDescriptorTable(0, g.GpuHandle(t0));
-        g.list->SetComputeRootDescriptorTable(1, g.GpuHandle(t1));
-        g.list->SetComputeRoot32BitConstants(2, UINT(c.constants.size()), c.constants.data(), 0);
+        record->SetDescriptorHeaps(1, heaps);
+        record->SetComputeRootSignature(program.root.Get());
+        record->SetComputeRootDescriptorTable(0, g.GpuHandle(t0));
+        record->SetComputeRootDescriptorTable(1, g.GpuHandle(t1));
+        record->SetComputeRoot32BitConstants(2, UINT(c.constants.size()), c.constants.data(), 0);
     };
     if (split) { std::thread other(bind); other.join(); } else bind();
-    g.list->SetPipelineState(pso);
-    g.list->Dispatch(c.groupsX, c.groupsY, c.groupsZ);
+    record->SetPipelineState(pso);
+    record->Dispatch(c.groupsX, c.groupsY, c.groupsZ);
+    if (record != g.list.Get()) g.proxy->Unbind();
     Barrier(g.list.Get(), output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     const uint32_t texel = c.components*4;
     const uint32_t pitch = (c.outW*texel + 255) & ~255u; const uint64_t slice = (uint64_t(pitch)*c.outH + 511) & ~511ull;
@@ -512,6 +554,74 @@ int RefusedTest(Gpu& g, Program& program, bool create1, const std::vector<std::s
         (unsigned long long)(after.launches - before.launches));
     return unrecognized && named && kept ? 0 : 1;
 }
+bool RunningUnderWine()
+{
+    return GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+}
+bool AddressModeLogged()
+{
+    for (const auto& line : RouteLines("cuda_buffers"))
+        if (line.find("\"mode\":\"address\"") != std::string::npos) return true;
+    return false;
+}
+bool LoggedFallback(const char* reason)
+{
+    for (const auto& line : RouteLines("cuda_dispatch_fallback"))
+        if (line.find(std::string("\"reason\":\"") + reason + "\"") != std::string::npos) return true;
+    return false;
+}
+bool PublishCoverage(const size_t (&routedBy)[3])
+{
+    const bool wine = RunningUnderWine(), addressMode = AddressModeLogged();
+    const bool everyPublish = routedBy[0] && routedBy[1] && routedBy[2];
+    const bool ok = (!wine || addressMode) && (!addressMode || everyPublish);
+    printf("%s buffer addresses: address mode %s%s; routed launches by publish mode direct %zu, CopyDescriptorsSimple %zu, CopyDescriptors %zu\n",
+        ok ? "PASS" : "FAIL", addressMode ? "logged" : "not logged", wine && !addressMode ? " (EXPECTED under Wine)" : "",
+        routedBy[0], routedBy[1], routedBy[2]);
+    return ok;
+}
+int WineOffTest(Gpu& g, Program& program, bool create1)
+{
+    g.MakeList(create1);
+    const Spec& s = kSpecs[0];
+    const Case c = Make(s, 37, 29, 5, true, 0);
+    const bool wine = RunningUnderWine();
+    const auto reference = Run(g, s, c, program, program.reference.Get(), false);
+    const auto before = xefg_cuda::Snapshot();
+    const auto routed = Run(g, s, c, program, program.routed.Get(), false);
+    const auto after = xefg_cuda::Snapshot();
+    size_t poison{};
+    const size_t bad = Mismatches(reference, routed, poison);
+    const uint64_t launches = after.launches - before.launches, fallbacks = after.fallbacks - before.fallbacks;
+    const bool latched = AddressModeLogged();
+    const bool kept = launches == 0 && fallbacks == 1 && LoggedFallback("descriptor_object");
+    const bool ok = bad == 0 && !latched && (wine ? kept : launches == 1 && fallbacks == 0);
+    printf("%s wine detection off (%s): %zu mismatching words, launches +%llu, fallbacks +%llu, address mode %s\n", ok ? "PASS" : "FAIL",
+        wine ? "under Wine" : "on Windows", bad, (unsigned long long)launches, (unsigned long long)fallbacks, latched ? "LATCHED" : "never latched");
+    return ok ? 0 : 1;
+}
+bool HookPathUnderWrapper(Gpu& g, Program& program)
+{
+    xefg_cuda::ProviderList* const proxy = std::exchange(g.proxy, nullptr);
+    const Spec& s = kSpecs[0];
+    const Case c = Make(s, 37, 29, 5, true, 0);
+    const auto reference = Run(g, s, c, program, program.reference.Get(), false);
+    const auto before = xefg_cuda::Snapshot();
+    const auto routed = Run(g, s, c, program, program.routed.Get(), false);
+    const auto after = xefg_cuda::Snapshot();
+    g.proxy = proxy;
+    size_t poison{};
+    const size_t bad = Mismatches(reference, routed, poison);
+    const bool wine = RunningUnderWine();
+    const bool refused = LoggedFallback("heap_handle");
+    const bool faulted = !RouteLines("cuda_route_fault").empty();
+    const bool launched = after.launches > before.launches;
+    const bool ok = bad == 0 && !faulted && (wine ? refused && !launched : launched);
+    printf("%s wrapped device, the route's own list hooks: %zu mismatching words, launches +%llu, %s, %s\n", ok ? "PASS" : "FAIL", bad,
+        (unsigned long long)(after.launches - before.launches), wine ? (refused ? "native heap handle refused (heap_handle)" : "not refused") : "Windows: native handles accepted",
+        faulted ? "route FAULTED" : "no fault");
+    return ok;
+}
 }
 
 int main(int argc, char** argv)
@@ -521,7 +631,7 @@ int main(int argc, char** argv)
         if (argc == 2 && !strcmp(argv[1], "--architecture-gate")) return ArchitectureGate();
         fs::path fatbinPath; std::vector<fs::path> programDirs;
         bool create1 = false, expectAgility = false, wrappedDevice = false, expectWrapper = false, dred = false, expectClassTable = false;
-        bool recorder = false, stream = false, strict = false, wrapperStreamSubobject = false;
+        bool recorder = false, stream = false, strict = false, wrapperStreamSubobject = false, wineOff = false;
         for (int i = 1; i < argc; ++i)
         {
             if (!strcmp(argv[i], "--fatbin") && i + 1 < argc) fatbinPath = argv[++i];
@@ -541,11 +651,13 @@ int main(int argc, char** argv)
             else if (!strcmp(argv[i], "--stream")) stream = true;
             else if (!strcmp(argv[i], "--strict")) strict = true;
             else if (!strcmp(argv[i], "--wrapper-stream-subobject")) wrapperStreamSubobject = true;
+            else if (!strcmp(argv[i], "--wine-off")) wineOff = true;
             else throw std::runtime_error(std::string("unknown argument ") + argv[i]);
         }
         if (fatbinPath.empty() || programDirs.empty()) throw std::runtime_error("usage: --fatbin FILE --programs DIR [...]");
         if ((stream || strict) && !recorder) throw std::runtime_error("--stream and --strict need --recorder");
         if (wrapperStreamSubobject && (recorder || expectWrapper)) throw std::runtime_error("--wrapper-stream-subobject runs alone");
+        if (wineOff && (recorder || expectWrapper || wrapperStreamSubobject)) throw std::runtime_error("--wine-off runs alone");
         const auto fatbin = ReadFile(fatbinPath);
         std::map<std::string, std::vector<uint8_t>> bySha;
         for (const auto& dir : programDirs)
@@ -633,6 +745,7 @@ int main(int argc, char** argv)
             printf("pipelines: %s%ls\n", recorder ? "XefgPsoRecorder.dll -> " : "", ImageName(TableOf(provided.Get())).c_str());
         }
         if (strict) xefg_cuda::SetStackRecognition(false);
+        if (wineOff) xefg_cuda::ForceWine(false);
         std::string reason;
         if (!xefg_cuda::Install(provided.Get(), GetModuleHandleW(nullptr), {fatbin.data(), fatbin.size()}, reason))
             throw std::runtime_error("route unavailable: " + reason);
@@ -661,6 +774,7 @@ int main(int argc, char** argv)
             return RefusedTest(g, programs.at(kSpecs[0].name), create1, {"\"reason\":\"stream_subobject\",\"subobject_type\":9,\"offset\":40,",
                 "\"caller\":\"XefgPsoWrapper.dll+", "\"provider_frame\":0,"});
         if (status0.layers != programs.size() + ownPrograms) throw std::runtime_error("not every layer program was recognized");
+        if (wineOff) return WineOffTest(g, programs.at(kSpecs[0].name), create1);
         if (recorder)
         {
             // Every layer recognized above the recorder: its line names XefgPsoRecorder.dll as the first frame after the wrapper's.
@@ -673,6 +787,8 @@ int main(int argc, char** argv)
             if (!ok) throw std::runtime_error("--recorder: the layers were not recognized through the stack walk");
         }
         g.MakeList(create1);
+        xefg_cuda::ProviderList provider;
+        if (expectWrapper) g.proxy = &provider;
         const auto nativeList = NativeOf(g.list.Get()); // the list the route hooks (the runtime's, under a wrapper)
         if (expectWrapper && nativeList.Get() == static_cast<IUnknown*>(g.list.Get()))
             throw std::runtime_error("--expect-wrapper: the recording list is not wrapped");
@@ -688,6 +804,12 @@ int main(int argc, char** argv)
             throw std::runtime_error("--expect-class-table: the recording list is not on the runtime's class table adopted as runtime_class");
 
         size_t failures = 0, cases = 0;
+        size_t routedBy[3]{};
+        if (expectWrapper)
+        {
+            const bool ok = HookPathUnderWrapper(g, programs.at(kSpecs[0].name));
+            ++cases; failures += !ok;
+        }
         struct Size { uint32_t w, h; };
         for (const auto& s : kSpecs)
         {
@@ -709,6 +831,7 @@ int main(int argc, char** argv)
                         ++cases;
                         const bool ok = bad == 0 && launchedOnce;
                         failures += !ok;
+                        routedBy[size_t(g.published)] += launchedOnce;
                         if (!ok || getenv("XEFG_CUDA_VERBOSE"))
                             printf("%s %s: %zu mismatching words (Intel left %zu poisoned), launches %llu -> %llu\n", ok ? "PASS" : "FAIL",
                                 c.label.c_str(), bad, poison, (unsigned long long)mid.launches, (unsigned long long)after.launches);
@@ -770,8 +893,17 @@ int main(int argc, char** argv)
         }
         const auto status = xefg_cuda::Snapshot();
         {
+            const bool ok = PublishCoverage(routedBy);
+            ++cases; failures += !ok;
+        }
+        {
             // No provider context remains: a list's own table gets its originals back, and the list keeps working.
+            const size_t viewsBefore = xefg_cuda::BufferViewCount();
             xefg_cuda::ForgetLayers();
+            const size_t viewsAfter = xefg_cuda::BufferViewCount();
+            const bool viewsCleared = viewsBefore > 0 && viewsAfter == 0;
+            printf("%s ForgetLayers clears the recorded buffer views: %zu before, %zu after\n", viewsCleared ? "PASS" : "FAIL", viewsBefore, viewsAfter);
+            ++cases; failures += !viewsCleared;
             const bool restored = ownTable ? HookedSlots(listTable) == 0 : true;
             const Spec& s = kSpecs[0];
             auto& program = programs.at(s.name);
@@ -784,6 +916,31 @@ int main(int argc, char** argv)
             ++cases; failures += !ok;
             printf("%s after ForgetLayers: list table %s (%zu hooks), %zu mismatching words, launches +%llu\n", ok ? "PASS" : "FAIL",
                 MemoryKind(listTable), HookedSlots(listTable), bad, (unsigned long long)(after.launches - status.launches));
+        }
+        {
+            const Spec& s = kSpecs[0];
+            auto& program = programs.at(s.name);
+            const Case c = Make(s, 37, 29, 5, true, 0);
+            const uint64_t first = xefg_cuda::NewPipelineToken(), second = xefg_cuda::NewPipelineToken();
+            ComPtr<ID3D12PipelineState> kept, removed;
+            {
+                xefg_cuda::PipelineScope scope(first);
+                removed = CreateRouted(provided.Get(), program.root.Get(), program.dxil, stream);
+            }
+            {
+                xefg_cuda::PipelineScope scope(second);
+                kept = CreateRouted(provided.Get(), program.root.Get(), program.dxil, stream);
+            }
+            Run(g, s, c, program, program.reference.Get(), false);
+            const size_t recorded = xefg_cuda::BufferViewCount();
+            xefg_cuda::ForgetPipelines(first);
+            const size_t withLayerLeft = xefg_cuda::BufferViewCount();
+            xefg_cuda::ForgetPipelines(second);
+            const size_t withNoneLeft = xefg_cuda::BufferViewCount();
+            const bool ok = recorded > 0 && withLayerLeft == recorded && withNoneLeft == 0;
+            ++cases; failures += !ok;
+            printf("%s ForgetPipelines clears the recorded buffer views with the last layer: %zu recorded, %zu with a layer left, %zu with none\n",
+                ok ? "PASS" : "FAIL", recorded, withLayerLeft, withNoneLeft);
         }
         printf("%zu cases, %zu failures; route launches %llu, fallbacks %llu\n", cases, failures,
             (unsigned long long)status.launches, (unsigned long long)status.fallbacks);
