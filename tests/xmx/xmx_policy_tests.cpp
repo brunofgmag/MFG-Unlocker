@@ -263,6 +263,56 @@ int main() {
     CHECK(cancelled.Settled(second, 1200 + kSettleMs));
   }
 
+  {
+    const Size full{3840, 2160};
+    const Size none{0, 0};
+    const Size half{1920, 1080};
+    const Size narrow{1920, 2160};
+    const Size flat{3840, 1080};
+    CHECK(ComposesHud(true, true, full, full, full, full, full, true));
+    CHECK(!ComposesHud(false, true, full, full, full, full, full, true));
+    CHECK(!ComposesHud(true, false, full, full, full, full, full, true));
+    CHECK(!ComposesHud(true, true, full, none, full, full, full, true));
+    CHECK(!ComposesHud(true, true, full, full, full, none, full, true));
+    CHECK(!ComposesHud(true, true, full, narrow, full, full, full, true));
+    CHECK(!ComposesHud(true, true, full, flat, full, full, full, true));
+    CHECK(!ComposesHud(true, true, full, full, full, narrow, full, true));
+    CHECK(!ComposesHud(true, true, full, full, full, flat, full, true));
+    CHECK(!ComposesHud(true, true, full, full, half, full, full, true));
+    CHECK(!ComposesHud(true, true, full, full, full, full, half, true));
+    CHECK(!ComposesHud(true, true, half, full, full, full, full, true));
+    CHECK(!ComposesHud(true, true, narrow, full, full, full, full, true));
+    CHECK(!ComposesHud(true, true, flat, full, full, full, full, true));
+    CHECK(!ComposesHud(true, true, full, full, full, full, full, false));
+    CHECK(!ComposesHud(true, true, none, none, none, none, none, true));
+    CHECK(!ComposesHud(true, true, full, none, full, none, full, true));
+    static_assert(ComposesHud(true, true, Size{64, 64}, Size{64, 64}, Size{64, 64}, Size{64, 64}, Size{64, 64}, true));
+
+    CHECK(HudGateFor(true, true, full, full, full, full, full, true) == HudGate::eOpen);
+    CHECK(HudGateFor(false, false, none, none, none, none, none, false) == HudGate::eOff);
+    CHECK(HudGateFor(true, false, full, none, full, full, full, true) == HudGate::eMissing);
+    CHECK(HudGateFor(true, false, full, full, full, full, full, true) == HudGate::ePass);
+    CHECK(HudGateFor(true, true, full, narrow, full, full, full, true) == HudGate::eSize);
+    CHECK(HudGateFor(true, true, half, full, full, full, full, true) == HudGate::eOutput);
+    CHECK(HudGateFor(true, true, full, full, full, full, full, false) == HudGate::eFormat);
+    for (int i = 0; i < int(HudGate::eCount); ++i) CHECK(HudGateText(HudGate(i))[0] != '\0');
+  }
+
+  {
+    CHECK(ComposableFormat(DXGI_FORMAT_R8G8B8A8_UNORM));
+    CHECK(ComposableFormat(DXGI_FORMAT_B8G8R8A8_UNORM));
+    CHECK(ComposableFormat(DXGI_FORMAT_R10G10B10A2_UNORM));
+    CHECK(ComposableFormat(DXGI_FORMAT_R16G16B16A16_FLOAT));
+    CHECK(ComposableFormat(DXGI_FORMAT_R8G8B8A8_TYPELESS));
+    CHECK(ComposableFormat(DXGI_FORMAT_B8G8R8A8_TYPELESS));
+    CHECK(ComposableFormat(DXGI_FORMAT_R10G10B10A2_TYPELESS));
+    CHECK(ComposableFormat(DXGI_FORMAT_R16G16B16A16_TYPELESS));
+    CHECK(!ComposableFormat(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB));
+    CHECK(!ComposableFormat(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB));
+    CHECK(!ComposableFormat(DXGI_FORMAT_B8G8R8X8_UNORM_SRGB));
+    static_assert(ComposableFormat(DXGI_FORMAT_R8G8B8A8_UNORM) && !ComposableFormat(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB));
+  }
+
   for (int i = 1; i < int(Idle::Count); ++i) CHECK(IdleText(Idle(i))[0] != '\0');
   CHECK(IdleText(Idle::None)[0] == '\0');
   CHECK(std::string(IdleText(Idle::OutputSettling)) == "output size settling");

@@ -1,5 +1,6 @@
 #include "xmx_generator.h"
 #include "xmx_context.h"
+#include "xmx_hud_composite.h"
 #include "xmx_policy.h"
 #include "xmx_status.h"
 #include "tag_states.h"
@@ -103,6 +104,10 @@ struct State
     uint32_t maxFrames{1};
     uint32_t serves{1};
     D3D12_RESOURCE_DESC outputDesc{};
+    hud_composite::Pass hud;
+    bool hudAnnounced{};
+    std::string hudFaultLogged;
+    uint32_t hudDeclinesLogged{};
     bool failed{};
     bool refused{};
     policy::RefusedShapes refusals;
@@ -857,6 +862,84 @@ bool OutputsReady(State& state, uint32_t count, ID3D12Resource* (&outputs)[kMaxF
     return true;
 }
 
+policy::Size SizeOf(const ComPtr<ID3D12Resource>& copy)
+{
+    if (!copy) return {};
+    const auto desc = copy->GetDesc();
+    return {desc.Width, desc.Height};
+}
+
+bool Viewable(const State& state, const Copies& next)
+{
+    return next.backbuffer && next.hudless && policy::ComposableFormat(next.backbuffer->GetDesc().Format)
+        && policy::ComposableFormat(next.hudless->GetDesc().Format)
+        && policy::ComposableFormat(state.outputDesc.Format);
+}
+
+void NoteHudUnavailable(State& state)
+{
+    const auto& fault = state.hud.Fault();
+    if (fault.empty() || fault == state.hudFaultLogged) return;
+    state.hudFaultLogged = fault;
+    Log("HUD composition unavailable: " + fault);
+}
+
+void RetireHud(State& state)
+{
+    for (auto& object : state.hud.Release())
+        if (object) Retire(state, std::move(object), Held::eOther);
+    Log("HUD composition: the device changed, the pass is rebuilt on the new one");
+}
+
+bool PrepareHud(State& state, const Copies& next)
+{
+    if (!status::hudWanted.load(std::memory_order_relaxed) || !next.hudless) return false;
+    if (!state.hud.BoundTo(state.device.Get())) RetireHud(state);
+    if (state.hud.Prepare(state.device.Get())) return true;
+    NoteHudUnavailable(state);
+    return false;
+}
+
+void NoteHudDeclined(State& state, policy::HudGate gate, const Copies& next)
+{
+    if (!state.hudAnnounced || !next.hudless) return;
+    if (gate == policy::HudGate::eOpen || gate == policy::HudGate::eOff) return;
+    const uint32_t reason = 1u << static_cast<uint32_t>(gate);
+    if ((state.hudDeclinesLogged & reason) != 0) return;
+    state.hudDeclinesLogged |= reason;
+    Log(std::string("HUD composition declined: ") + policy::HudGateText(gate));
+}
+
+bool ComposesHud(State& state, const Copies& next, const Copies& previous)
+{
+    const bool prepared = PrepareHud(state, next);
+    const auto gate = policy::HudGateFor(status::hudWanted.load(std::memory_order_relaxed), prepared,
+        {state.outputDesc.Width, state.outputDesc.Height}, SizeOf(next.hudless), SizeOf(next.backbuffer),
+        SizeOf(previous.hudless), SizeOf(previous.backbuffer), Viewable(state, next));
+    NoteHudDeclined(state, gate, next);
+    return gate == policy::HudGate::eOpen;
+}
+
+void FeedHudless(ExecuteParams& execute, const Copies& next, const Copies& previous)
+{
+    execute.previous.backbuffer = previous.data.hudless;
+    execute.next.backbuffer = next.data.hudless;
+}
+
+void ComposeHud(State& state, ID3D12GraphicsCommandList* list, ID3D12Resource* output, const Copies& next)
+{
+    const bool debug = status::hudDebug.load(std::memory_order_relaxed);
+    if (!state.hud.Apply(list, state.device.Get(), output, next.backbuffer.Get(), next.hudless.Get(), debug))
+    {
+        NoteHudUnavailable(state);
+        return;
+    }
+    status::hudComposed.fetch_add(1, std::memory_order_relaxed);
+    if (state.hudAnnounced) return;
+    state.hudAnnounced = true;
+    Log("HUD: XeFG interpolates the HUD-less color; the real frame's HUD is composed over it");
+}
+
 Outcome ExecuteModel(State& state, ID3D12GraphicsCommandList* list, const policy::FramePlan& plan)
 {
     auto& next = state.frames[state.current];
@@ -877,6 +960,8 @@ Outcome ExecuteModel(State& state, ID3D12GraphicsCommandList* list, const policy
     execute.outputCount = static_cast<uint8_t>(plan.count);
     execute.firstFrame = plan.index - 1;
     execute.frameCount = 1;
+    const bool composesHud = ComposesHud(state, next, previous);
+    if (composesHud) FeedHudless(execute, next, previous);
     const auto result = context::Execute(state.pair.fg, *state.pair.rvas, state.context, list, execute);
     if (result < 0)
     {
@@ -890,6 +975,7 @@ Outcome ExecuteModel(State& state, ID3D12GraphicsCommandList* list, const policy
     }
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 4) Log("execute result " + std::to_string(result));
+    if (composesHud && result == 0) ComposeHud(state, list, outputs[plan.index - 1], next);
     return {false, result == 0, result == 0 ? policy::Idle::None : policy::Idle::NoOutput};
 }
 

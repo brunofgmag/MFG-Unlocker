@@ -168,6 +168,15 @@ constexpr int CopyFamily(DXGI_FORMAT format) {
       return 0;
   }
 }
+constexpr bool ComposableFormat(DXGI_FORMAT format) {
+  switch (format) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+      return false;
+    default:
+      return true;
+  }
+}
+
 constexpr bool CanCopy(uint64_t targetWidth, uint32_t targetHeight, DXGI_FORMAT target, uint64_t sourceWidth,
                        uint32_t sourceHeight, DXGI_FORMAT source) {
   if (targetWidth != sourceWidth || targetHeight != sourceHeight) return false;
@@ -277,6 +286,48 @@ class PairCost {
     return complete ? std::optional<FrameCost>(done) : std::nullopt;
   }
 };
+
+struct Size {
+  uint64_t width;
+  uint32_t height;
+  friend constexpr bool operator==(const Size&, const Size&) = default;
+};
+
+constexpr bool Present(const Size& size) { return size.width != 0 && size.height != 0; }
+
+enum class HudGate { eOpen, eOff, eMissing, ePass, eSize, eOutput, eFormat, eCount };
+
+constexpr HudGate HudGateFor(bool wanted, bool prepared, const Size& output, const Size& nextHudless,
+                             const Size& nextBackbuffer, const Size& previousHudless,
+                             const Size& previousBackbuffer, bool viewable) {
+  if (!wanted) return HudGate::eOff;
+  if (!Present(nextHudless) || !Present(previousHudless)) return HudGate::eMissing;
+  if (!prepared) return HudGate::ePass;
+  if (nextHudless != nextBackbuffer || previousHudless != previousBackbuffer) return HudGate::eSize;
+  if (output != nextBackbuffer) return HudGate::eOutput;
+  if (!viewable) return HudGate::eFormat;
+  return HudGate::eOpen;
+}
+
+constexpr bool ComposesHud(bool wanted, bool prepared, const Size& output, const Size& nextHudless,
+                           const Size& nextBackbuffer, const Size& previousHudless, const Size& previousBackbuffer,
+                           bool viewable) {
+  return HudGateFor(wanted, prepared, output, nextHudless, nextBackbuffer, previousHudless, previousBackbuffer,
+                    viewable) == HudGate::eOpen;
+}
+
+constexpr const char* HudGateText(HudGate gate) {
+  switch (gate) {
+    case HudGate::eOpen: return "open";
+    case HudGate::eOff: return "xmxHud is off";
+    case HudGate::eMissing: return "a HUD-less color is missing";
+    case HudGate::ePass: return "the HUD pass is not ready on this device";
+    case HudGate::eSize: return "a HUD-less color differs in size from its back buffer";
+    case HudGate::eOutput: return "the output differs in size from the back buffer";
+    case HudGate::eFormat: return "a texture is a typed sRGB format the pass cannot view";
+    default: return "";
+  }
+}
 
 inline std::string GpuCostText(const window_stats::Spread& execute, const window_stats::Spread& copies,
                                const window_stats::Spread& total) {

@@ -22,6 +22,13 @@ Simulator 2024 at 4K. To turn it on:
 
 XeMFG DLSS-G stays off on RTX 30 and RTX 20 GPUs and while XeMFG standalone is on.
 
+When the game gives DLSS Frame Generation a HUD-less color, XeFG interpolates that and each generated frame gets the
+newest real frame's HUD copied over it, so the HUD isn't interpolated with the scene. A pixel counts as HUD where the
+real frame differs from the HUD-less color by more than 3/255 in any channel, plus one pixel around it. Without a
+HUD-less color, or with one of another size, the frame is generated as before. `"xmxHud": 0` in
+`RTXMFG-Universal.json` turns this off, and `"xmxHudDebug": 1` paints what counts as HUD magenta in the generated
+frames. Both apply live, and the status file's `xmxHudComposed` counts the frames that got the HUD.
+
 **XeLL sleep**, under Generation model, sends the game's Reflex sleep to Intel XeLL instead of NVIDIA's driver. It works
 with all three generation models (NVIDIA, XeMFG DLSS-G and ANR FG) in D3D12 games, and it needs `bin/libxell.dll` from
 the same XeSS SDK in the `RTXMFG-XeSS` folder. Under Proton it also keeps vkd3d-proton's low latency mode off, so

@@ -46,6 +46,8 @@ bool Evaluate(void* commandList, const void* parameters, NVSDK_NGX_Result& resul
 bool AnswerNgxCall(NgxLayer layer, ProviderCall call, const ProviderArgs& args, NVSDK_NGX_Result& result) noexcept;
 bool ConfigureStandIn(bool on) noexcept;
 size_t StandInLive() noexcept;
+bool ConfigureHud(bool on, bool debug) noexcept;
+uint64_t HudComposed() noexcept;
 void RecordTagStates(const sl::ResourceTag* tags, uint32_t count) noexcept;
 Status ReadStatus(bool driverGenerating) noexcept;
 std::string MemoryLine() noexcept;
