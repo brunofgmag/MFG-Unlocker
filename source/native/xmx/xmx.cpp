@@ -430,6 +430,27 @@ size_t StandInLive() noexcept
     return gStandIns.Live();
 }
 
+bool ConfigureHud(bool on, bool debug) noexcept
+{
+    const bool onChanged = status::hudWanted.exchange(on, std::memory_order_relaxed) != on;
+    const bool debugChanged = status::hudDebug.exchange(debug, std::memory_order_relaxed) != debug;
+    Quietly([&]
+    {
+        if (onChanged)
+            Emit(on ? "HUD composition on: XeFG interpolates the HUD-less color and the real frame's HUD is composed over it"
+                    : "HUD composition off: XeFG interpolates the frame with its HUD");
+        if (debugChanged)
+            Emit(debug ? "HUD debug on: what counts as HUD is painted magenta in generated frames"
+                       : "HUD debug off: generated frames carry the real frame's HUD");
+    });
+    return onChanged || debugChanged;
+}
+
+uint64_t HudComposed() noexcept
+{
+    return status::hudComposed.load(std::memory_order_relaxed);
+}
+
 void RecordTagStates(const sl::ResourceTag* tags, uint32_t count) noexcept
 {
     if (tags == nullptr || !Latched()) return;

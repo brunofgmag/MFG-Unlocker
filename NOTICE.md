@@ -19,7 +19,8 @@ Intel and XeSS are trademarks of Intel Corporation or its subsidiaries.
 
 The XeMFG DLSS-G frame generation backend (`source/native/xmx/`) is derived from the XMX generator of
 MFGAdaUnlock-RenoDx 1.9.0 by mavismmg (https://github.com/mavismmg/MFGAdaUnlock-RenoDx), which renamed it XeMFG
-DLSS-G in 1.10.0. That code is used under the MIT License:
+DLSS-G in 1.10.0. Its HUD composite (`source/native/xmx/xmx_hud_composite.cpp`) comes from MFGAdaUnlock-RenoDx 1.10.0.
+That code is used under the MIT License:
 
 ```
 MIT License

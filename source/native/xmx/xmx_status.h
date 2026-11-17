@@ -18,6 +18,8 @@ inline std::atomic<uint64_t> lastGeneratedTick{0}, lastEvaluateTick{0}, evaluate
 inline std::atomic<int> idle{0};
 inline std::atomic<uint32_t> idleLogged{0}, framesLimit{0};
 inline std::atomic<bool> hooked{false}, hookFailed{false};
+inline std::atomic<bool> hudWanted{true}, hudDebug{false};
+inline std::atomic<uint64_t> hudComposed{0};
 inline std::mutex failureLock;
 inline std::string failure;
 

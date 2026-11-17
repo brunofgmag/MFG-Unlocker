@@ -20,6 +20,22 @@ static void Check(bool value,const char* what){printf("%s %s\n",value?"PASS":"FA
 template<class T>T Proc(HMODULE m,const char* name){return reinterpret_cast<T>(GetProcAddress(m,name));}
 static std::string Read(const std::filesystem::path& path){std::ifstream f(path);return {std::istreambuf_iterator<char>(f),{}};}
 static bool Has(const std::string& s,const char* key,const char* value){return s.find(std::string("\"")+key+"\":"+value)!=std::string::npos;}
+static std::string ReadShared(const std::wstring& path){
+    const HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return {};
+    std::string text;char buffer[65536];DWORD read=0;
+    while(ReadFile(file,buffer,sizeof(buffer),&read,nullptr)&&read)text.append(buffer,read);
+    CloseHandle(file);
+    return text;
+}
+static bool LogHas(const char* fragment){
+    const ULONGLONG start=GetTickCount64();
+    do{
+        if(ReadShared(diagnostic_paths::RuntimeLog()).find(fragment)!=std::string::npos)return true;
+        Sleep(25);
+    }while(GetTickCount64()-start<7000);
+    return false;
+}
 static std::string Wait(const std::filesystem::path& path,const char* key,const char* value){
     const ULONGLONG start=GetTickCount64();std::string s;
     do{
@@ -198,6 +214,20 @@ int wmain(int argc,wchar_t** argv){
     Check(Has(Wait(status,"xmxStandIn","false"),"xmxStandIn","false"),"no XMX key leaves the stand-in off");
     rewriteXmx(",\"xmxStandIn\":1");
     Check(Has(Wait(status,"xmxStandIn","true"),"xmxStandIn","true"),"an explicit xmxStandIn 1 holds without the xmx key");
+    auto rewriteHud=[&](const char* fields){std::ofstream(cwd/L"config.json")<<"{\"mode\":\"fixed\",\"multiplier\":4"<<fields<<"}";};
+    rewriteHud("");
+    auto hudDefaults=Wait(status,"xmxHud","true");
+    Check(Has(hudDefaults,"xmxHud","true")&&Has(hudDefaults,"xmxHudDebug","false")&&Has(hudDefaults,"xmxHudComposed","0"),"without the keys HUD composition is on, its debug paint off and nothing composed");
+    rewriteHud(",\"xmxHud\":0");
+    Check(Has(Wait(status,"xmxHud","false"),"xmxHud","false"),"xmxHud 0 turns HUD composition off live");
+    Check(LogHas("XeMFG DLSS-G HUD composition off"),"turning HUD composition off is logged");
+    rewriteHud(",\"xmxHud\":1,\"xmxHudDebug\":1");
+    auto hudDebug=Wait(status,"xmxHudDebug","true");
+    Check(Has(hudDebug,"xmxHudDebug","true")&&Has(hudDebug,"xmxHud","true"),"xmxHudDebug 1 turns the debug paint on live and xmxHud 1 turns composition back on");
+    Check(LogHas("XeMFG DLSS-G HUD composition on")&&LogHas("XeMFG DLSS-G HUD debug on"),"turning HUD composition and its debug paint on is logged");
+    rewriteHud("");
+    Check(Has(Wait(status,"xmxHudDebug","false"),"xmxHudDebug","false"),"removing the keys puts the debug paint back off");
+    Check(LogHas("XeMFG DLSS-G HUD debug off"),"turning the debug paint off is logged");
     if(lockedMode){
         Check(Read(status)==lockedContent,"candidate does not overwrite the game's locked snapshot in place");
         std::string alternate;

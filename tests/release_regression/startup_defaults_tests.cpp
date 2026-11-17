@@ -64,6 +64,8 @@ int wmain(int argc, wchar_t** argv)
     const bool follow=mode==L"clean"||mode==L"follow"||xmx||anr;
     check(has("followGame",follow?"true":"false"),"startup control preserves default or explicit follow intent");
     check(has("mode",follow?"\"follow\"":mode==L"dynamic"?"\"dynamic\"":"\"fixed\""),"startup mode matches requested semantics");
+    check(has("xmxHud","true")&&has("xmxHudDebug","false")&&has("xmxHudComposed","0"),"HUD composition is on, its debug paint off and nothing composed when the JSON omits the keys");
+    check(!logged("HUD composition")&&!logged("HUD debug"),"the HUD defaults log no change line");
     const char* multiplier=mode==L"fixed"?"3":mode==L"environment"?"5":mode==L"legacy"||mode==L"dynamic"?"4":"2";
     check(has("multiplier",multiplier),"saved or explicit multiplier is retained");
     if(mode==L"dynamic") check(has("dynamicTargetFrameRate","120"),"saved Dynamic target is retained");

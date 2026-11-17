@@ -45,7 +45,9 @@ gpu_reason="needs MFG_TEST_GPU=1 (creates a GPU device)"
 
 gpu_tests=(BlackwellAdapterProbe NvapiResolveTests XmxLatencyRuntimeTests XmxRuntimeDeviceTests
     XmxGeneratorReuseTests XmxGeneratorFramesTests XmxGeneratorRefusedTests XmxGeneratorRefusedAlternatingTests
-    XmxGeneratorFallbackTests XmxGeneratorMemoryDeviceTests XmxGeneratorCopyMismatchTests)
+    XmxGeneratorFallbackTests XmxGeneratorMemoryDeviceTests XmxGeneratorCopyMismatchTests
+    XmxGeneratorHudCompositeTests XmxGeneratorHudExecuteTests XmxGeneratorHudDeviceTests XmxGeneratorHudGeneratedTests
+    XmxGeneratorHudUnpreparedTests)
 
 gpu_source_level_cases=(optiscaler-streamline-device)
 
