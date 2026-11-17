@@ -210,7 +210,8 @@ void Announce(Selection selection) noexcept
         switch (selection)
         {
         case Selection::eOn:
-            Emit("generation selected: Intel's XeFG replaces NVIDIA's generator");
+            Emit("generation selected: XeMFG DLSS-G replaces NVIDIA's generator; the first context names its model "
+                "(xefg or fsr, from xmxModel)");
             break;
         case Selection::eRefusedStandalone:
             Emit("refused: XeMFG standalone is on and replaces DLSS frame generation, which XeMFG DLSS-G needs");
