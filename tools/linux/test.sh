@@ -1,24 +1,39 @@
 #!/usr/bin/env bash
 set -uo pipefail
+set -m
 
 source "$(dirname "${BASH_SOURCE[0]}")/environment.sh"
+[ -n "${MFG_HEADLESS_ACTIVE:-}" ] || exec "$here/headless.sh" "$here/test.sh" "$@"
 
 tests_build=${MFG_TEST_BUILD_DIR:-$repository/build/linux-tests}
 dll=$build/MFGUnlocker.dll
 release_dll=$cache/release/v1.7.1/MFGUnlocker.dll
 export MFG_WINEPREFIX=${MFG_WINEPREFIX:-$cache/wineprefix}
+jobs=${MFG_TEST_JOBS:-8}
 results=$(mktemp)
+outcomes=$tests_build/release_regression/outcomes
 
 stop_wineserver() {
     WINEPREFIX=$MFG_WINEPREFIX wineserver -k >/dev/null 2>&1
     WINEPREFIX=$MFG_WINEPREFIX wineserver -w >/dev/null 2>&1
 }
 
+stop_background_jobs() {
+    local pid
+    for pid in $(jobs -p); do
+        kill -TERM -- "-$pid" 2>/dev/null
+    done
+}
+
 finish() {
+    trap - EXIT INT TERM
+    stop_background_jobs
     rm -f "$results"
     stop_wineserver
 }
 trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 declare -A not_runnable=(
     [shipped_catalogs]="needs the Windows fonts the catalogs list (Segoe UI and others); the Wine prefix has none"
@@ -151,30 +166,37 @@ build_targets() {
     cmake --build "$tests_build/$project" ${1:+--target "$@"} -- -k 0
 }
 
-run_ctest() {
-    local project=$1 line name status
-    local pattern='Test +#[0-9]+: ([^ ]+) \.+ *(.*[^ ]) +[0-9.]+ sec'
-    local exclusion=()
-    if gpu_gated; then
-        exclusion=(-E "$(gpu_exclusion)")
-        record_gpu_gated "$project"
+record_ctest_result() {
+    local project=$1 name=$2 status=$3
+    if [ "$status" = Passed ]; then
+        record "$project" "$name" passed ""
+    elif [ "$status" = "***Skipped" ]; then
+        record "$project" "$name" "not runnable" "${skipped_reasons[$name]:-the test skipped itself; see $tests_build/$project/ctest.log}"
+    elif [ -n "${not_runnable[$name]:-}" ]; then
+        record "$project" "$name" "not runnable" "${not_runnable[$name]}"
+    else
+        record "$project" "$name" failed "$status; see $tests_build/$project/ctest.log"
     fi
-    ctest --test-dir "$tests_build/$project" --timeout 120 --output-on-failure "${exclusion[@]}" >"$tests_build/$project/ctest.log" 2>&1
+}
+
+run_ctest() {
+    local project=$1 line log=$tests_build/$project/ctest.log
+    local pattern='Test +#[0-9]+: ([^ ]+) \.+ *(.*[^ ]) +[0-9.]+ sec'
+    local listing='Test +#[0-9]+: (.+)$'
+    local -A statuses=()
+    ctest --test-dir "$tests_build/$project" -j "$jobs" --timeout 120 --output-on-failure -E "$(gpu_exclusion)" >"$log" 2>&1
+    if gpu_gated; then
+        record_gpu_gated "$project"
+    else
+        ctest --test-dir "$tests_build/$project" --timeout 120 --output-on-failure -R "$(gpu_exclusion)" >>"$log" 2>&1
+    fi
     while IFS= read -r line; do
-        if [[ $line =~ $pattern ]]; then
-            name=${BASH_REMATCH[1]}
-            status=${BASH_REMATCH[2]}
-            if [ "$status" = Passed ]; then
-                record "$project" "$name" passed ""
-            elif [ "$status" = "***Skipped" ]; then
-                record "$project" "$name" "not runnable" "${skipped_reasons[$name]:-the test skipped itself; see $tests_build/$project/ctest.log}"
-            elif [ -n "${not_runnable[$name]:-}" ]; then
-                record "$project" "$name" "not runnable" "${not_runnable[$name]}"
-            else
-                record "$project" "$name" failed "$status; see $tests_build/$project/ctest.log"
-            fi
-        fi
-    done <"$tests_build/$project/ctest.log"
+        [[ $line =~ $pattern ]] && statuses[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
+    done <"$log"
+    while IFS= read -r line; do
+        [[ $line =~ $listing ]] && [ -n "${statuses[${BASH_REMATCH[1]}]:-}" ] &&
+            record_ctest_result "$project" "${BASH_REMATCH[1]}" "${statuses[${BASH_REMATCH[1]}]}"
+    done < <(ctest --test-dir "$tests_build/$project" -N)
 }
 
 run_project() {
@@ -195,10 +217,10 @@ regression_run() {
 }
 
 run_regression_case() {
-    local case_name=$1 output=$tests_build/release_regression/results
+    local case_name=$1 output=$tests_build/release_regression/results/$1
     if regression_run "$dll" "$case_name" "$output"; then
         record release_regression "$case_name" passed ""
-    elif ! regression_run "$release_dll" "$case_name" "$tests_build/release_regression/results-release"; then
+    elif ! regression_run "$release_dll" "$case_name" "$tests_build/release_regression/results-release/$case_name"; then
         record release_regression "$case_name" "not runnable" "fails the same way with the unmodified v1.7.1 DLL under Wine"
     else
         record release_regression "$case_name" failed "passes with the v1.7.1 DLL; $(tail -n 1 "$output/$case_name.log")"
@@ -206,7 +228,7 @@ run_regression_case() {
 }
 
 run_source_level_case() {
-    local case_name=$1 output=$tests_build/release_regression/results
+    local case_name=$1 output=$tests_build/release_regression/results/$1
     if is_gpu_source_level_case "$case_name" && gpu_gated; then
         record release_regression "$case_name" "not runnable" "$gpu_reason"
         return
@@ -220,8 +242,64 @@ run_source_level_case() {
     fi
 }
 
-run_regression_project() {
+running_pids() {
+    local pid
+    for pid in "$@"; do
+        kill -0 "$pid" 2>/dev/null && printf '%s\n' "$pid"
+    done
+}
+
+run_cases_in_parallel() {
+    local entry runner case_name pid
+    local pids=()
+    for entry in "$@"; do
+        read -r runner case_name <<<"$entry"
+        while [ "${#pids[@]}" -ge "$jobs" ]; do
+            wait -n "${pids[@]}"
+            pids=($(running_pids "${pids[@]}"))
+        done
+        ( results=$outcomes/$case_name; "$runner" "$case_name" ) </dev/null &
+        pids+=("$!")
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+    done
+}
+
+record_outcome() {
+    if [ -f "$outcomes/$1" ]; then
+        cat "$outcomes/$1" >>"$results"
+    else
+        record release_regression "$1" failed "no outcome was written; see $tests_build/release_regression/results/$1/$1.log"
+    fi
+}
+
+record_factory_revision_test() {
+    if "$here/wine.sh" "$tests_build/release_regression/FactoryRevisionTests.exe" >/dev/null 2>&1; then
+        record release_regression FactoryRevisionTests passed ""
+    else
+        record release_regression FactoryRevisionTests failed "run build/linux-tests/release_regression/FactoryRevisionTests.exe under tools/linux/wine.sh for its output"
+    fi
+}
+
+run_regression_cases() {
     local case_name
+    local lanes=()
+    rm -rf "$outcomes" "$tests_build/release_regression/results" "$tests_build/release_regression/results-release"
+    mkdir -p "$outcomes"
+    for case_name in "${regression_cases[@]}"; do
+        lanes+=("run_regression_case $case_name")
+    done
+    for case_name in "${source_level_cases[@]}"; do
+        lanes+=("run_source_level_case $case_name")
+    done
+    run_cases_in_parallel "${lanes[@]}"
+    for case_name in "${regression_cases[@]}" "${source_level_cases[@]}"; do
+        record_outcome "$case_name"
+    done
+}
+
+run_regression_project() {
     if [ ! -f "$dll" ]; then
         record release_regression "(project)" failed "no $dll; run tools/linux/build.sh first"
         return
@@ -229,17 +307,8 @@ run_regression_project() {
     configure release_regression -DSTREAMLINE_ROOT="${root[streamline]}" -DIMGUI_ROOT="${root[imgui]}" \
         -DVULKAN_INCLUDE_DIR="${root[vulkan12]}" -DXESS_SDK_ROOT="${root[xess]}" || return
     build_targets release_regression "${regression_targets[@]}"
-    if "$here/wine.sh" "$tests_build/release_regression/FactoryRevisionTests.exe" >/dev/null 2>&1; then
-        record release_regression FactoryRevisionTests passed ""
-    else
-        record release_regression FactoryRevisionTests failed "run build/linux-tests/release_regression/FactoryRevisionTests.exe under tools/linux/wine.sh for its output"
-    fi
-    for case_name in "${regression_cases[@]}"; do
-        run_regression_case "$case_name"
-    done
-    for case_name in "${source_level_cases[@]}"; do
-        run_source_level_case "$case_name"
-    done
+    record_factory_revision_test
+    run_regression_cases
 }
 
 proton_results=${MFG_PROTON_CUDA_OUT:-$repository/build/proton-cuda}/route/results.txt
