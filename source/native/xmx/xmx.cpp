@@ -440,8 +440,8 @@ bool ConfigureHud(bool on, bool debug) noexcept
     Quietly([&]
     {
         if (onChanged)
-            Emit(on ? "HUD composition on: XeFG interpolates the HUD-less color and the real frame's HUD is composed over it"
-                    : "HUD composition off: XeFG interpolates the frame with its HUD");
+            Emit(on ? "HUD composition on: the generated frames come from the HUD-less color and the real frame's HUD is composed over them"
+                    : "HUD composition off: the generated frames are interpolated with the HUD");
         if (debugChanged)
             Emit(debug ? "HUD debug on: what counts as HUD is painted magenta in generated frames"
                        : "HUD debug off: generated frames carry the real frame's HUD");

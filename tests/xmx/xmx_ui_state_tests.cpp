@@ -64,6 +64,10 @@ void Reading()
     Check(!ready.xmxXell && ready.xmxXellReady, "XeLL ready without the key on is read");
     const auto both = Parse("{\"xmxXell\":true,\"xmxXellReady\":true}");
     Check(both.xmxXell && both.xmxXellReady, "XeLL on and ready is read");
+    Check(absent.xmxHud, "an older status without the key reads the HUD composite as on, the mod's default");
+    Check(!Parse("{\"xmxHud\":false}").xmxHud, "the HUD composite off is read");
+    Check(Parse("{\"xmxHud\":true,\"xmxHudDebug\":false}").xmxHud, "the HUD composite on is read, apart from its debug key");
+    Check(Parse("{\"xmxHudDebug\":true,\"xmxHud\":false}").xmxHud == FALSE, "the debug key does not stand for the HUD composite");
 }
 
 void Rows()
@@ -92,6 +96,15 @@ void Rows()
     state.xmxXellReady = FALSE;
     state.optiScaler = TRUE;
     Check(!xess_ui::XellWaiting(state), "nothing waits while OptiScaler owns the controls");
+    xess_ui::State hud;
+    Check(!xess_ui::HudShown(hud), "the HUD composite row is hidden with NVIDIA's generator");
+    hud.anrSaved = TRUE;
+    Check(!xess_ui::HudShown(hud), "and with ANR FG");
+    hud.anrSaved = FALSE;
+    hud.xmxSaved = TRUE;
+    Check(xess_ui::HudShown(hud), "it shows when XeMFG DLSS-G or FSR MFG is the saved model");
+    hud.xmxModelSaved = 1;
+    Check(xess_ui::HudShown(hud), "FSR MFG included");
 }
 
 void ModelCombo()
