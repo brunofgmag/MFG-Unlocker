@@ -52,7 +52,7 @@ struct State
     double latencyPacingHeldMs = 0, latencyPacingSlackMs = 0, latencyPacingSleptMs = 0;
     long long latencyPacingAgeMs = -1;
     BOOL xmxSaved = FALSE, xmxLatched = FALSE, xmxHooked = FALSE, xmxPartiallyHooked = FALSE, xmxGenerating = FALSE;
-    BOOL xmxEvaluating = FALSE, xmxBypassed = FALSE, xmxXell = FALSE, xmxXellReady = FALSE;
+    BOOL xmxEvaluating = FALSE, xmxBypassed = FALSE, xmxXell = FALSE, xmxXellReady = FALSE, xmxHud = TRUE;
     uint32_t xmxFramesLimit = 0, xmxModelSaved = 0;
     std::string xmxRefusal, xmxIdle, xmxFailure, xmxModelInEffect;
     BOOL anrSaved = FALSE, anrLatched = FALSE, anrLoaded = FALSE, anrEvaluating = FALSE;
@@ -137,6 +137,11 @@ inline bool XellWaiting(const State& state) noexcept
     return XellShown(state) && state.xmxXell && !state.xmxXellReady;
 }
 
+inline bool HudShown(const State& state) noexcept
+{
+    return state.xmxSaved != FALSE;
+}
+
 // latency.1: the backend's latencyPacingDetail string (patcher.cpp LatencyPacingStatus).
 inline bool ParseLatencyPacing(const std::string& detail, State& state) noexcept
 {
@@ -219,6 +224,7 @@ State Read(const std::string& text, BoolReader boolean, IntegerReader integer, S
     boolean(text, "xmxBypassed", next.xmxBypassed);
     boolean(text, "xmxXell", next.xmxXell);
     boolean(text, "xmxXellReady", next.xmxXellReady);
+    boolean(text, "xmxHud", next.xmxHud);
     integer(text, "xmxFramesLimit", next.xmxFramesLimit);
     string(text, "xmxRefusal", next.xmxRefusal);
     string(text, "xmxIdle", next.xmxIdle);

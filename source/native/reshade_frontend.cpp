@@ -1136,6 +1136,11 @@ BOOL NativeFilePersistXmxXell(bool on)
     return NativeFilePersistFlag("xmxXell", on);
 }
 
+BOOL NativeFilePersistXmxHud(bool on)
+{
+    return NativeFilePersistFlag("xmxHud", on);
+}
+
 void WINAPI NativeFileSetFrontendAttached(BOOL)
 {
 }
@@ -3795,11 +3800,29 @@ void XmxXellControlRow()
     if (!gXmxXellSaveFailed) x.xmxXell = on ? TRUE : FALSE;
 }
 
+bool gXmxHudSaveFailed = false;
+
+void XmxHudControlRow()
+{
+    auto& x = gXessUi;
+    if (!xess_ui::HudShown(x)) return;
+    bool on = x.xmxHud != FALSE;
+    ControlRow("HUD composite");
+    const bool changed = ImGui::Checkbox("##xmxhud", &on);
+    HelpMarker("When the game gives DLSS frame generation a HUD-less image, the generated frames are made from it and "
+        "the newest real frame's HUD is copied over each one, so the HUD is not interpolated with the scene. Off, the "
+        "frames are generated with the HUD in them.\nIt applies to XeMFG DLSS-G and FSR MFG. Changes apply right away.");
+    if (!changed) return;
+    gXmxHudSaveFailed = !NativeFilePersistXmxHud(on);
+    if (!gXmxHudSaveFailed) x.xmxHud = on ? TRUE : FALSE;
+}
+
 void XemfgControlRows()
 {
     auto& x = gXessUi;
     XmxControlRow();
     XmxXellControlRow();
+    XmxHudControlRow();
     auto wanted = x;
     bool on = x.xemfgStandalone != FALSE;
     int index = static_cast<int>(std::clamp<uint32_t>(x.xemfgSavedFrames ? x.xemfgSavedFrames : 2, 2, 6)) - 2;
@@ -3957,6 +3980,7 @@ void XmxNotes()
     const char* xmxName = xess_ui::XmxModelName(x);
     if (gXmxSaveFailed) Note(Tone::Bad, "The generation model could not be saved.");
     if (gXmxXellSaveFailed) Note(Tone::Bad, "The XeLL sleep setting could not be saved.");
+    if (gXmxHudSaveFailed) Note(Tone::Bad, "The HUD composite setting could not be saved.");
     if (xess_ui::XellWaiting(x))
         Note(Tone::Pending, "XeLL starts once it finds libxell.dll in RTXMFG-XeSS and the game's D3D12 device.");
     if (x.xmxRefusal == "translated_gpu")
