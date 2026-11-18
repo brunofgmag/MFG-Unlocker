@@ -2370,6 +2370,7 @@ std::string XmxStatus(const ControlConfig& control)
 {
     const auto report = ReadXmxStatus();
     return std::string(",\"xmxSaved\":") + (control.xmx ? "true" : "false")
+        + ",\"xmxModelSaved\":" + (control.xmxModel == 1 ? "1" : "0")
         + ",\"xmxLatched\":" + (report.latched ? "true" : "false")
         + ",\"xmxRefusal\":\"" + JsonEscapeUtf8(report.refusal) + "\""
         + ",\"xmxHooked\":" + (report.hooked ? "true" : "false")
