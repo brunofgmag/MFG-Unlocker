@@ -103,6 +103,7 @@ struct State
     Timing timing;
     uint64_t pairs{};
     uint64_t lastCaptureMs{};
+    uint64_t lastCaptureCounter{};
     bool lastGenerated{};
     uint32_t contexts{};
     uint32_t maxFrames{1};
@@ -887,14 +888,30 @@ void DescribeFrame(const State& state, const NVSDK_NGX_Parameter* params, Copies
     data.reset = Value<unsigned int>(params, "DLSSG.Reset", 0) != 0 ? 1 : 0;
 }
 
+uint64_t PerformanceCounter()
+{
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    return static_cast<uint64_t>(counter.QuadPart);
+}
+
+float MillisecondsBetween(uint64_t earlier, uint64_t later)
+{
+    LARGE_INTEGER frequency{};
+    QueryPerformanceFrequency(&frequency);
+    return static_cast<float>(static_cast<double>(later - earlier) * 1000.0 / static_cast<double>(frequency.QuadPart));
+}
+
 Captured CapturePair(State& state, ID3D12GraphicsCommandList* list, const NVSDK_NGX_Parameter* params,
     ID3D12Resource* backbuffer, D3D12_RESOURCE_STATES backbufferState, ID3D12Resource* depth, ID3D12Resource* motion)
 {
     state.retired.Collect(++state.pairs);
     const auto now = GetTickCount64();
-    const auto frameTimeMs = state.lastCaptureMs == 0 ? 0.f : static_cast<float>(now - state.lastCaptureMs);
+    const auto counter = PerformanceCounter();
+    const auto frameTimeMs = state.lastCaptureCounter == 0 ? 0.f : MillisecondsBetween(state.lastCaptureCounter, counter);
     if (policy::PairIsStale(state.lastCaptureMs, now)) state.frames[state.current].valid = false;
     state.lastCaptureMs = now;
+    state.lastCaptureCounter = counter;
     state.current ^= 1;
     auto& next = state.frames[state.current];
     next.valid = false;

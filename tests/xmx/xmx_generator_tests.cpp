@@ -1281,7 +1281,7 @@ int ModelFsr()
     Check(gFake.frameTimes.front() >= 0.f, "the first frame time is not negative");
     Sleep(40);
     Evaluate(rig, 640, 360, 0, 5, 0, kHudlessFormat, 1);
-    Check(gFake.frameTimes.back() >= 30.f, "the frame time is the milliseconds since the previous pair");
+    Check(gFake.frameTimes.back() >= 39.f && gFake.frameTimes.back() < 500.f, "the frame time is the milliseconds since the previous pair, to the millisecond");
     Check(ContextLine(LastContextLine(), 640, 360, 5), "the context line keeps its cost format");
     Check(LastContextLine().find(", model fsr") != std::string::npos, "the context line names the model");
     return 0;
