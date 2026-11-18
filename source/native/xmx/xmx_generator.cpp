@@ -1021,7 +1021,8 @@ void ComposeHud(State& state, ID3D12GraphicsCommandList* list, ID3D12Resource* o
     status::hudComposed.fetch_add(1, std::memory_order_relaxed);
     if (state.hudAnnounced) return;
     state.hudAnnounced = true;
-    Log("HUD: XeFG interpolates the HUD-less color; the real frame's HUD is composed over it");
+    const char* const generator = state.model.load() == &XefgModel() ? "XeFG" : "FSR MFG";
+    Log(std::string("HUD: ") + generator + " interpolates the HUD-less color; the real frame's HUD is composed over it");
 }
 
 Outcome ExecuteModel(State& state, ID3D12GraphicsCommandList* list, const policy::FramePlan& plan)

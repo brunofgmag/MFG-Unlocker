@@ -1287,6 +1287,22 @@ int ModelFsr()
     return 0;
 }
 
+int ModelFsrHud()
+{
+    Rig rig;
+    if (!OpenRig(rig)) return 2;
+    AttachWithFake(rig, &gFakeModel);
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eFsr);
+    xmx::status::hudWanted.store(true);
+    xmx::status::hudDebug.store(false);
+    for (unsigned round = 0; round < 2; ++round)
+        for (unsigned index = 1; index <= 2; ++index) Evaluate(rig, 640, 360, 0, 2, 640, kHudlessFormat, index);
+    Check(gFake.executes > 0, "the FSR model is executed");
+    Check(CountLogs("HUD: FSR MFG interpolates the HUD-less color") == 1, "the composition is announced once, naming FSR MFG");
+    Check(CountLogs("HUD: XeFG") == 0, "and not naming XeFG");
+    return 0;
+}
+
 int ModelFsrMissing()
 {
     Rig rig;
@@ -1435,6 +1451,7 @@ int wmain(int argc, wchar_t** argv)
     else if (mode == L"model-default") code = ModelDefault();
     else if (mode == L"model-fsr") code = ModelFsr();
     else if (mode == L"model-fsr-missing") code = ModelFsrMissing();
+    else if (mode == L"model-fsr-hud") code = ModelFsrHud();
     else if (mode == L"model-latched") code = ModelLatched();
 #ifdef XMX_HUD_PASS_STUB
     else if (mode == L"hud-unprepared") code = HudUnprepared();
