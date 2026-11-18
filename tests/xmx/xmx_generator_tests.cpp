@@ -61,9 +61,10 @@ struct Parameters final : NVSDK_NGX_Parameter
     std::map<std::string, ID3D12Resource*> resources;
     std::map<std::string, unsigned int> numbers;
     std::map<std::string, int> signedNumbers;
+    std::map<std::string, float> floats;
 
     void Set(const char*, unsigned long long) override {}
-    void Set(const char*, float) override {}
+    void Set(const char* name, float value) override { floats[name] = value; }
     void Set(const char*, double) override {}
     void Set(const char* name, unsigned int value) override { numbers[name] = value; }
     void Set(const char* name, int value) override { signedNumbers[name] = value; }
@@ -71,7 +72,13 @@ struct Parameters final : NVSDK_NGX_Parameter
     void Set(const char* name, ID3D12Resource* value) override { resources[name] = value; }
     void Set(const char*, void*) override {}
     NVSDK_NGX_Result Get(const char*, unsigned long long*) const override { return NVSDK_NGX_Result_Fail; }
-    NVSDK_NGX_Result Get(const char*, float*) const override { return NVSDK_NGX_Result_Fail; }
+    NVSDK_NGX_Result Get(const char* name, float* value) const override
+    {
+        const auto found = floats.find(name);
+        if (found == floats.end()) return NVSDK_NGX_Result_Fail;
+        *value = found->second;
+        return NVSDK_NGX_Result_Success;
+    }
     NVSDK_NGX_Result Get(const char*, double*) const override { return NVSDK_NGX_Result_Fail; }
     NVSDK_NGX_Result Get(const char* name, unsigned int* value) const override
     {
@@ -155,8 +162,10 @@ bool OpenRig(Rig& rig)
     return true;
 }
 
+std::map<std::string, float> gGameFloats;
+
 bool Evaluate(Rig& rig, UINT width, UINT height, int depthInverted = 0, unsigned frames = 0, UINT hudlessWidth = 0,
-    DXGI_FORMAT hudlessFormat = kHudlessFormat)
+    DXGI_FORMAT hudlessFormat = kHudlessFormat, unsigned index = 0)
 {
     auto& textures = rig.sized[width];
     if (!textures.backbuffer)
@@ -171,6 +180,8 @@ bool Evaluate(Rig& rig, UINT width, UINT height, int depthInverted = 0, unsigned
     Parameters params;
     params.Set("DLSSG.DepthInverted", depthInverted);
     if (frames != 0) params.Set("DLSSG.MultiFrameCount", frames);
+    if (index != 0) params.Set("DLSSG.MultiFrameIndex", index);
+    params.floats = gGameFloats;
     params.resources["DLSSG.Backbuffer"] = textures.backbuffer.Get();
     params.resources["DLSSG.OutputInterpolated"] = textures.interpolated.Get();
     params.resources["DLSSG.Depth"] = textures.depth.Get();
@@ -1172,6 +1183,150 @@ int TensorCores()
     return 0;
 }
 
+struct FakeModel
+{
+    unsigned creates = 0, initializes = 0, executes = 0;
+    xmx::generator::FrameExtras extras{};
+    unsigned outputCount = 0;
+    std::vector<unsigned> firstFrames;
+    std::vector<float> frameTimes;
+};
+
+FakeModel gFake;
+
+bool FakeCreate(const xmx::generator::Pair&, ID3D12Device*, void*& handle, std::string&) noexcept
+{
+    ++gFake.creates;
+    handle = &gHandles[63];
+    return true;
+}
+
+int FakeInitialize(const xmx::generator::Pair&, void*, xmx::context::InitParams&) noexcept
+{
+    ++gFake.initializes;
+    return 0;
+}
+
+int FakeExecute(const xmx::generator::Pair&, void*, ID3D12GraphicsCommandList*, xmx::context::ExecuteParams& params,
+    const xmx::generator::FrameExtras& extras) noexcept
+{
+    ++gFake.executes;
+    gFake.extras = extras;
+    gFake.outputCount = params.outputCount;
+    gFake.firstFrames.push_back(params.firstFrame);
+    gFake.frameTimes.push_back(extras.frameTimeMs);
+    return 0;
+}
+
+const xmx::generator::Model gFakeModel{"fsr", 5, FakeCreate, FakeInitialize, FakeExecute};
+
+void AttachWithFake(Rig& rig, const xmx::generator::Model* fsr)
+{
+    HMODULE fake = reinterpret_cast<HMODULE>(&gHandles);
+    xmx::generator::Attach({fake, &rig.rvas, 2, fsr});
+}
+
+bool StubUntouched()
+{
+    namespace stub = xmx::tensor_cores::stub;
+    return stub::creates == 0 && stub::initializes == 0 && stub::executes == 0;
+}
+
+bool FakeUntouched()
+{
+    return gFake.creates == 0 && gFake.initializes == 0 && gFake.executes == 0;
+}
+
+int ModelDefault()
+{
+    Rig rig;
+    if (!OpenRig(rig)) return 2;
+    namespace stub = xmx::tensor_cores::stub;
+    AttachWithFake(rig, &gFakeModel);
+    Check(std::string(xmx::generator::ModelInEffect()) == "xefg", "without a choice XeFG is the model wanted");
+    for (int i = 0; i < 3; ++i) Evaluate(rig, 640, 360, 0, 3);
+    Check(stub::creates == 1 && stub::initializes == 1 && stub::executes > 0,
+        "without ConfigureModel the XeFG module creates, initializes and executes");
+    Check(FakeUntouched(), "the FSR model is not called even when it is built in");
+    Check(std::string(xmx::generator::ModelInEffect()) == "xefg", "XeFG stays the model in effect");
+    Check(CountLogs("the FSR model is not in this build") == 0, "no missing-model line is logged");
+    return 0;
+}
+
+int ModelFsr()
+{
+    Rig rig;
+    if (!OpenRig(rig)) return 2;
+    namespace stub = xmx::tensor_cores::stub;
+    AttachWithFake(rig, &gFakeModel);
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eFsr);
+    Check(std::string(xmx::generator::ModelInEffect()) == "fsr", "before a context the wanted model is named");
+    gGameFloats["DLSSG.CameraNear"] = 0.25f;
+    gGameFloats["DLSSG.CameraFar"] = 7000.f;
+    gGameFloats["DLSSG.CameraFOV"] = 1.05f;
+    for (unsigned round = 0; round < 2; ++round)
+        for (unsigned index = 1; index <= 5; ++index) Evaluate(rig, 640, 360, 0, 5, 0, kHudlessFormat, index);
+    Check(gFake.creates == 1 && gFake.initializes == 1, "the FSR model creates and initializes the context");
+    Check(gFake.executes > 0, "the FSR model is executed");
+    Check(StubUntouched(), "the XeFG module is not called");
+    Check(std::string(xmx::generator::ModelInEffect()) == "fsr", "the model in effect is FSR");
+    Check(gInitFrames.empty(), "the XeFG runtime saw no initialize");
+    Check(gFake.outputCount == 5, "five generated frames reach the model as five outputs, past the runtime's 2");
+    std::vector<unsigned> seen = gFake.firstFrames;
+    std::sort(seen.begin(), seen.end());
+    seen.erase(std::unique(seen.begin(), seen.end()), seen.end());
+    Check(seen == std::vector<unsigned>({0, 1, 2, 3, 4}), "the model sees first frames 0 to 4");
+    Check(gFake.extras.cameraNear == 0.25f && gFake.extras.cameraFar == 7000.f && gFake.extras.cameraFovY == 1.05f,
+        "the model gets the camera near, far and field of view the game set");
+    Check(gFake.frameTimes.front() >= 0.f, "the first frame time is not negative");
+    Sleep(40);
+    Evaluate(rig, 640, 360, 0, 5, 0, kHudlessFormat, 1);
+    Check(gFake.frameTimes.back() >= 39.f && gFake.frameTimes.back() < 500.f, "the frame time is the milliseconds since the previous pair, to the millisecond");
+    Check(ContextLine(LastContextLine(), 640, 360, 5), "the context line keeps its cost format");
+    Check(LastContextLine().find(", model fsr") != std::string::npos, "the context line names the model");
+    return 0;
+}
+
+int ModelFsrMissing()
+{
+    Rig rig;
+    if (!OpenRig(rig)) return 2;
+    namespace stub = xmx::tensor_cores::stub;
+    AttachWithFake(rig, nullptr);
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eFsr);
+    for (int i = 0; i < 3; ++i) Evaluate(rig, 640, 360, 0, 3);
+    Check(stub::creates == 1 && stub::initializes == 1 && stub::executes > 0,
+        "without the FSR model in the build XeFG runs");
+    Check(FakeUntouched(), "the FSR model is not called");
+    Check(CountLogs("the FSR model is not in this build") == 1, "the missing model is logged once");
+    Check(std::string(xmx::generator::ModelInEffect()) == "xefg", "the model in effect is XeFG");
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eFsr);
+    Check(CountLogs("model stays") == 0, "asking for FSR again is not a change");
+    return 0;
+}
+
+int ModelLatched()
+{
+    Rig rig;
+    if (!OpenRig(rig)) return 2;
+    AttachWithFake(rig, &gFakeModel);
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eFsr);
+    for (int i = 0; i < 3; ++i) Evaluate(rig, 640, 360, 0, 3);
+    Check(gFake.executes > 0 && StubUntouched(), "the first context is the FSR model's");
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eXefg);
+    Check(std::string(xmx::generator::ModelInEffect()) == "fsr", "the latched model is the one in effect");
+    const auto executes = gFake.executes;
+    for (int i = 0; i < 3; ++i) Evaluate(rig, 640, 360, 0, 3);
+    Check(gFake.executes > executes && StubUntouched(), "later frames still run the FSR model");
+    xmx::generator::ConfigureModel(xmx::generator::ModelKind::eXefg);
+    Check(CountLogs("model stays fsr until the game restarts") == 1, "the refused change is logged once");
+    Evaluate(rig, 800, 450, 0, 3);
+    Sleep(1100);
+    Evaluate(rig, 800, 450, 0, 3);
+    Check(StubUntouched() && gFake.creates == 2, "a new shape makes its context with the latched model");
+    return 0;
+}
+
 #ifdef XMX_HUD_PASS_STUB
 int HudUnprepared()
 {
@@ -1277,6 +1432,10 @@ int wmain(int argc, wchar_t** argv)
     else if (mode == L"hud-device") code = HudDevice();
     else if (mode == L"hud-generated") code = HudGenerated();
     else if (mode == L"tensor-cores") code = TensorCores();
+    else if (mode == L"model-default") code = ModelDefault();
+    else if (mode == L"model-fsr") code = ModelFsr();
+    else if (mode == L"model-fsr-missing") code = ModelFsrMissing();
+    else if (mode == L"model-latched") code = ModelLatched();
 #ifdef XMX_HUD_PASS_STUB
     else if (mode == L"hud-unprepared") code = HudUnprepared();
 #endif

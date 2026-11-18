@@ -63,7 +63,8 @@ gpu_tests=(BlackwellAdapterProbe NvapiResolveTests XmxLatencyRuntimeTests XmxRun
     XmxGeneratorReuseTests XmxGeneratorFramesTests XmxGeneratorRefusedTests XmxGeneratorRefusedAlternatingTests
     XmxGeneratorFallbackTests XmxGeneratorMemoryDeviceTests XmxGeneratorCopyMismatchTests
     XmxGeneratorHudCompositeTests XmxGeneratorHudExecuteTests XmxGeneratorHudDeviceTests XmxGeneratorHudGeneratedTests
-    XmxGeneratorHudUnpreparedTests XmxGeneratorTensorCoresTests)
+    XmxGeneratorHudUnpreparedTests XmxGeneratorTensorCoresTests XmxGeneratorModelDefaultTests
+    XmxGeneratorModelFsrTests XmxGeneratorModelFsrMissingTests XmxGeneratorModelLatchedTests)
 
 gpu_source_level_cases=(optiscaler-streamline-device)
 
@@ -349,6 +350,7 @@ run_project ampere_runtime -DSTREAMLINE_ROOT="${root[streamline]}" \
     -DNGX_INCLUDE_DIR="${root[streamline]}/external/ngx-sdk/include" -DVULKAN_INCLUDE_DIR="${root[vulkan12]}"
 run_project xmx -DSTREAMLINE_ROOT="${root[streamline]}" -DXESS_SDK_ROOT="${root[xess]}" \
     -DMFG_GENERATED_DIR="$build/generated" -DMFG_PAYLOAD_DLL="$dll" -DXMX_RUNTIME_DIR="${root[xess]}/bin"
+run_project fsr -DMFG_GENERATED_DIR="$build/generated"
 run_project anr -DSTREAMLINE_ROOT="${root[streamline]}"
 run_project dlss5 -DSTREAMLINE_ROOT="${root[streamline]}" -DDLSS5_CANDIDATE_DLL="$dll"
 run_regression_project

@@ -26,7 +26,7 @@ bool Contains(const std::string& text, std::string_view piece)
 int main()
 {
     const std::string saved =
-        "{\"followGame\":true,\"mode\":\"follow\",\"xemfgStandalone\":0,\"xmx\":1,\"reflexSleepSkip\":1,\"xmxXell\":1,\"xmxStandIn\":1,\"xmxHud\":0,\"xmxHudDebug\":1,\"xmxTensorCores\":0,\"xemfgFrames\":4,\"version\":13}\n";
+        "{\"followGame\":true,\"mode\":\"follow\",\"xemfgStandalone\":0,\"xmx\":1,\"reflexSleepSkip\":1,\"xmxXell\":1,\"xmxStandIn\":1,\"xmxHud\":0,\"xmxHudDebug\":1,\"xmxTensorCores\":0,\"xmxModel\":1,\"xemfgFrames\":4,\"version\":13}\n";
     const std::string rebuilt =
         "{\"followGame\":true,\"mode\":\"follow\",\"multiplier\":2,\"dlssgPreset\":2,\"version\":13}\n";
 
@@ -41,6 +41,7 @@ int main()
     CHECK(Contains(content, "\"xmxHud\":0"));
     CHECK(Contains(content, "\"xmxHudDebug\":1"));
     CHECK(Contains(content, "\"xmxTensorCores\":0"));
+    CHECK(Contains(content, "\"xmxModel\":1"));
     CHECK(content.back() == '\n' || content.back() == '}');
 
     std::string chosen = "{\"followGame\":true,\"xmx\":0,\"version\":13}\n";
@@ -78,6 +79,10 @@ int main()
     bool tensorCoresListed = false;
     for (const char* name : control_json::kCarriedFields) tensorCoresListed |= std::string_view(name) == "xmxTensorCores";
     CHECK(tensorCoresListed);
+
+    bool modelListed = false;
+    for (const char* name : control_json::kCarriedFields) modelListed |= std::string_view(name) == "xmxModel";
+    CHECK(modelListed);
 
     bool anrListed = false;
     for (const char* name : control_json::kCarriedFields) anrListed |= std::string_view(name) == "anr";

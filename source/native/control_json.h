@@ -5,10 +5,10 @@
 
 namespace control_json
 {
-inline constexpr std::array<const char*, 24> kCarriedFields{"xessModel", "optiScalerUi", "dlssSrPreset",
+inline constexpr std::array<const char*, 25> kCarriedFields{"xessModel", "optiScalerUi", "dlssSrPreset",
     "dlssRrPreset", "xessVulkan", "xessVulkanFrames", "xemfgStandalone", "xmx", "xemfgFrames", "xemfgDynamic",
     "xemfgTargetFps", "xemfgRounding", "xemfgAllow1x", "xemfgTargetAsCap", "xemfgFlipQueue", "latencyPacing",
-    "dlssgDefaults", "reflexSleepSkip", "xmxXell", "xmxStandIn", "xmxHud", "xmxHudDebug", "xmxTensorCores", "anr"};
+    "dlssgDefaults", "reflexSleepSkip", "xmxXell", "xmxStandIn", "xmxHud", "xmxHudDebug", "xmxTensorCores", "xmxModel", "anr"};
 
 inline bool FindValue(const std::string& content, const char* name, size_t& offset) noexcept
 {

@@ -6,6 +6,7 @@
 #include "xmx_status.h"
 #include "xmx_tensor_cores.h"
 #include "tag_states.h"
+#include "fsr/fsr_model.h"
 #include "gpu_dispatch.h"
 #include "single_module.h"
 #include "xess/runtime_layout.h"
@@ -173,7 +174,7 @@ void LoadRuntime() noexcept
             else Log("XeLL exports missing in libxell.dll");
             const Rvas* rvas = SupportedRvas(fg);
             if (rvas == nullptr) return;
-            generator::Attach({fg, rvas, PublishModel(fg, ll)});
+            generator::Attach({fg, rvas, PublishModel(fg, ll), &fsr::Model()});
             gRuntimeReady.store(true, std::memory_order_release);
         }
         catch (...)
@@ -209,7 +210,8 @@ void Announce(Selection selection) noexcept
         switch (selection)
         {
         case Selection::eOn:
-            Emit("generation selected: Intel's XeFG replaces NVIDIA's generator");
+            Emit("generation selected: XeMFG DLSS-G replaces NVIDIA's generator; the first context names its model "
+                "(xefg or fsr, from xmxModel)");
             break;
         case Selection::eRefusedStandalone:
             Emit("refused: XeMFG standalone is on and replaces DLSS frame generation, which XeMFG DLSS-G needs");
@@ -455,6 +457,16 @@ void ConfigureTensorCores(bool on) noexcept
 bool TensorCoresInEffect() noexcept
 {
     return tensor_cores::InEffect();
+}
+
+void ConfigureModel(uint32_t value) noexcept
+{
+    generator::ConfigureModel(value == 1 ? generator::ModelKind::eFsr : generator::ModelKind::eXefg);
+}
+
+const char* ModelInEffect() noexcept
+{
+    return generator::ModelInEffect();
 }
 
 uint64_t HudComposed() noexcept

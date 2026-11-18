@@ -33,7 +33,7 @@ intel_seconds=${MFG_INTEL_DUMP_SECONDS:-90}
 proton_wineserver=$(dirname "$proton")/files/bin/wineserver
 
 usage() {
-    printf 'usage: %s [build|plain|reshade|addons|scskiller|game|all|route|intel-programs|game-closed]\n' "$(basename "$0")" >&2
+    printf 'usage: %s [build|plain|reshade|addons|scskiller|game|all|route|intel-programs|profile|game-closed]\n' "$(basename "$0")" >&2
     exit 2
 }
 
@@ -359,7 +359,7 @@ run_route_test() {
     mkdir -p "$test_dir/logs"
     mapfile -t arguments < <(windows_arguments "$@")
     proton_environment "$route_build" "$test_dir/logs" "$route_build:$dir"
-    case $name in *reshade*) export WINEDLLOVERRIDES=dxgi=n,b ;; esac
+    case $name in *[Rr]e[Ss]hade*) export WINEDLLOVERRIDES=dxgi=n,b ;; esac
     if game_is_open; then
         printf 'a game is open: %s not started\n' "$name" >&2
         return 3
@@ -399,6 +399,87 @@ run_xmx_contexts_test() {
     ( export MFG_TEST_GPU=1; run_route_test "$dir" "$name" "$exe" "$xess/bin" "$build/MFGUnlocker.dll" )
 }
 
+run_fsr_model_tests() {
+    local dir=$1 exe=$tests_build/fsr/FsrModelTests.exe name test
+    local tests=(two_x_matches_original four_x_middle_matches_two_x four_x_instants_differ skipped_last_resets
+        skipped_pair_resets offset_refused later_index_first)
+    for test in "${tests[@]}"; do
+        name=FsrModel_$test
+        [[ $name =~ ${MFG_ROUTE_FILTER:-.} ]] || continue
+        if [ ! -f "$exe" ]; then
+            printf 'xess_cuda_proton|%s|failed|%s is not built; tools/linux/test.sh builds tests/fsr\n' "$name" "$exe" >>"$dir/results.txt"
+            continue
+        fi
+        ( export MFG_TEST_GPU=1; run_route_test "$dir" "$name" "$exe" "$test" ) || return $?
+    done
+}
+
+stage_profile_reshade() {
+    local dir=$1 exe=$2 entry
+    rm -rf "$dir/bin"
+    mkdir -p "$dir/bin"
+    cp "$exe" "$dir/bin/" || return 1
+    copy_verified "$reshade_dll" "$dir/bin/dxgi.dll" "$reshade_sha256" || return 1
+    while IFS= read -r entry; do
+        copy_verified "$game_dir/${entry%%:*}" "$dir/bin/${entry%%:*}" "${entry##*:}" || return 1
+    done < <(route_addon_entries)
+    printf '[GENERAL]\nCheckForUpdates=0\n[OVERLAY]\nTutorialProgress=4\n' >"$dir/bin/ReShade.ini"
+}
+
+profile_reshade_header() {
+    local entry names=()
+    while IFS= read -r entry; do
+        names+=("${entry%%:*}")
+    done < <(route_addon_entries)
+    printf 'profile under ReShade (dxgi.dll %s) with the add-ons %s; glass-cockpit-dlss-fix.addon64 is not staged, as in the route tests\n' \
+        "$reshade_sha256" "${names[*]}"
+}
+
+name_profile_programs() {
+    local output=$1 dir=$2 known word number sha path
+    known=$({ sha256sum "$inputs"/xess-programs/programs/*.dxil "$inputs"/pregenerated/xess_shaders/*.dxil "$intel_programs"/*.dxil; } 2>/dev/null)
+    while read -r word number _ sha _; do
+        path=$(grep -m1 "^$sha " <<<"$known" | cut -c67-)
+        if [ -n "$path" ]; then
+            printf 'pass %s -> %s\n' "$number" "$path"
+        elif [ "$sha" = '?' ]; then
+            printf 'pass %s -> the pipeline was not seen being created\n' "$number"
+        else
+            printf 'pass %s -> not in the known program folders (dumped at %s/programs/%s.dxil)\n' "$number" "$dir" "$sha"
+        fi
+    done < <(tr -d '\r' <"$output" | grep -a -E '^pass [0-9]+ = ')
+}
+
+run_profile() {
+    local dir=$out/profile name=XmxXefgProfile exe=$tests_build/xmx/XmxXefgProfile.exe rc argument arguments=() reshade=0
+    for argument in "$@"; do
+        if [ "$argument" = --reshade ]; then reshade=1; else arguments+=("$argument"); fi
+    done
+    if [ ! -f "$exe" ]; then
+        printf 'error: %s is not built; tools/linux/test.sh builds tests/xmx\n' "$exe" >&2
+        return 1
+    fi
+    if [ "$reshade" = 1 ]; then
+        dir=$out/profile-reshade
+        name=XmxXefgProfileReShade
+        mkdir -p "$dir"
+        stage_profile_reshade "$dir" "$exe" || return 1
+        exe=$dir/bin/XmxXefgProfile.exe
+        arguments+=(--expect-wrapper)
+        profile_reshade_header
+    fi
+    mkdir -p "$dir"
+    rm -rf "$dir/programs"
+    arguments+=(--programs "$dir/programs")
+    : >"$dir/results.txt"
+    nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
+    ( export MFG_TEST_GPU=1; run_route_test "$dir" "$name" "$exe" "$xess/bin" "$build/MFGUnlocker.dll" "${arguments[@]}" ) || return $?
+    cat "$dir/tests/$name/output.txt"
+    name_profile_programs "$dir/tests/$name/output.txt" "$dir"
+    rc=$(test_exit_code "$dir/tests/$name/output.txt")
+    [ "$rc" = 0 ]
+}
+
 run_route() {
     local mode=$1 dir=$out/$1 status
     if [ "$mode" = intel-programs ]; then dump_intel_programs; return $?; fi
@@ -412,6 +493,7 @@ run_route() {
     run_route_tests "$dir"
     status=$?
     [ "$status" = 3 ] || run_xmx_contexts_test "$dir" || status=$?
+    [ "$status" = 3 ] || run_fsr_model_tests "$dir" || status=$?
     printf '=== %s: results ===\n' "$mode"
     cat "$dir/results.txt"
     return $status
@@ -419,13 +501,19 @@ run_route() {
 
 mode=${1:-plain}
 case $mode in
-    build|all|route|intel-programs|game-closed) ;;
+    build|all|route|intel-programs|profile|game-closed) ;;
     *) printf '%s\n' "${modes[@]}" | grep -qx "$mode" || usage ;;
 esac
 
 if [ "$mode" = game-closed ]; then
     game_is_open && exit 3
     exit 0
+fi
+
+if [ "$mode" = profile ]; then
+    shift
+    run_profile "$@"
+    exit $?
 fi
 
 if printf '%s\n' "${route_modes[@]}" | grep -qx "$mode"; then

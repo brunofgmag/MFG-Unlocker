@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ImGuiRoot,
     [Parameter(Mandatory = $true)][string]$XessSdkRoot,
     [Parameter(Mandatory = $true)][string]$XessProgramsRoot,
+    [Parameter(Mandatory = $true)][string]$FidelityFxSdkRoot,
     [string]$VulkanIncludeDirectory = 'C:/VulkanSDK/1.2.176.1/Include',
     # vkxefg.1: the XeMFG Vulkan layer's headers (Vulkan 1.3 synchronization2/maintenance4) and its SPIR-V program set.
     [string]$XvkVulkanIncludeDirectory = 'C:/VulkanSDK/1.4.363.0/Include',
@@ -160,6 +161,7 @@ $arguments = @(
     '-DMFG_UNLOCK_XESS=ON',
     "-DXESS_SDK_ROOT=$XessSdkRoot",
     "-DXESS_PROGRAMS_ROOT=$XessProgramsRoot",
+    "-DMFG_FIDELITYFX_SDK_ROOT=$FidelityFxSdkRoot",
     "-DXVK_PROGRAMS_ROOT=$XvkProgramsRoot",
     "-DXVK_VULKAN_INCLUDE_DIR=$XvkVulkanIncludeDirectory",
     "-DDLSS5_VK_DXC=$Dlss5VulkanDxc",
@@ -231,6 +233,7 @@ Assert-CacheValue 'MFG_UNLOCK_OUTPUT_PULL_MASK_ONLY' 'ON'
 Assert-CacheValue 'MFG_UNLOCK_XESS' 'ON'
 Assert-CachePath 'XESS_SDK_ROOT' $XessSdkRoot
 Assert-CachePath 'XESS_PROGRAMS_ROOT' $XessProgramsRoot
+Assert-CachePath 'MFG_FIDELITYFX_SDK_ROOT' $FidelityFxSdkRoot
 Assert-CachePath 'MFG_CUDA_ROOT' $CudaRoot
 Assert-CacheValue 'MFG_UNLOCK_OUTPUT_PULL_MASK_OCCUPANCY' 'OFF'
 Assert-CacheValue 'MFG_UNLOCK_BOUNDED_OVERLAY_REDESIGN' $EnableBoundedOverlayRedesign.IsPresent.ToString().ToUpperInvariant()

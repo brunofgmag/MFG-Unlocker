@@ -233,6 +233,15 @@ int wmain(int argc,wchar_t** argv){
     Check(Has(Wait(status,"xmxTensorCores","false"),"xmxTensorCores","false"),"xmxTensorCores 0 is read from the saved file");
     rewriteHud(",\"xmxTensorCores\":1");
     Check(Has(Wait(status,"xmxTensorCores","true"),"xmxTensorCores","true"),"xmxTensorCores 1 is read from the saved file");
+    rewriteHud("");
+    auto modelDefault=Wait(status,"xmxModel","\"xefg\"");
+    Check(Has(modelDefault,"xmxModel","\"xefg\"")&&Has(modelDefault,"xmxModelSaved","0"),"without the key the XeFG model is wanted and xmxModelSaved is 0");
+    rewriteHud(",\"xmxModel\":1");
+    auto modelFsr=Wait(status,"xmxModel","\"fsr\"");
+    Check(Has(modelFsr,"xmxModel","\"fsr\"")&&Has(modelFsr,"xmxModelSaved","1"),"xmxModel 1 is read from the saved file, names the FSR model before a context exists and reports xmxModelSaved 1");
+    rewriteHud(",\"xmxModel\":0");
+    auto modelXefg=Wait(status,"xmxModel","\"xefg\"");
+    Check(Has(modelXefg,"xmxModel","\"xefg\"")&&Has(modelXefg,"xmxModelSaved","0"),"xmxModel 0 is read from the saved file and reports xmxModelSaved 0");
     Check(LogHas("XeMFG DLSS-G HUD debug off"),"turning the debug paint off is logged");
     if(lockedMode){
         Check(Read(status)==lockedContent,"candidate does not overwrite the game's locked snapshot in place");

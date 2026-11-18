@@ -53,14 +53,14 @@ struct State
     long long latencyPacingAgeMs = -1;
     BOOL xmxSaved = FALSE, xmxLatched = FALSE, xmxHooked = FALSE, xmxPartiallyHooked = FALSE, xmxGenerating = FALSE;
     BOOL xmxEvaluating = FALSE, xmxBypassed = FALSE, xmxXell = FALSE, xmxXellReady = FALSE;
-    uint32_t xmxFramesLimit = 0;
-    std::string xmxRefusal, xmxIdle, xmxFailure;
+    uint32_t xmxFramesLimit = 0, xmxModelSaved = 0;
+    std::string xmxRefusal, xmxIdle, xmxFailure, xmxModelInEffect;
     BOOL anrSaved = FALSE, anrLatched = FALSE, anrLoaded = FALSE, anrEvaluating = FALSE;
     uint32_t anrLive = 0;
     std::string anrRefusal, anrFailure;
 };
 
-enum class Model : int { eNvidia = 0, eXmx = 1, eAnr = 2 };
+enum class Model : int { eNvidia = 0, eXmx = 1, eAnr = 2, eFsr = 3 };
 
 inline bool XmxFailed(const State& state) noexcept
 {
@@ -84,15 +84,21 @@ inline bool AnrFailed(const State& state) noexcept
 
 inline Model SavedModel(const State& state) noexcept
 {
-    if (state.xmxSaved) return Model::eXmx;
+    if (state.xmxSaved) return state.xmxModelSaved == 1 ? Model::eFsr : Model::eXmx;
     return state.anrSaved ? Model::eAnr : Model::eNvidia;
+}
+
+inline bool ModelUsesXmx(Model model) noexcept
+{
+    return model == Model::eXmx || model == Model::eFsr;
 }
 
 inline bool ModelRefused(const State& state, Model model) noexcept
 {
     switch (model)
     {
-    case Model::eXmx: return XmxRefused(state);
+    case Model::eXmx:
+    case Model::eFsr: return XmxRefused(state);
     case Model::eAnr: return AnrRefused(state);
     default: return false;
     }
@@ -103,10 +109,22 @@ inline bool ModelLocked(const State& state) noexcept
     return SavedModel(state) == Model::eNvidia && XmxRefused(state) && AnrRefused(state);
 }
 
+inline bool XmxModelPending(const State& state) noexcept
+{
+    const char* saved = state.xmxModelSaved == 1 ? "fsr" : "xefg";
+    return state.xmxLatched && !state.xmxModelInEffect.empty() && state.xmxModelInEffect != saved;
+}
+
 inline bool ModelRestartPending(const State& state) noexcept
 {
     const bool anrBlockedByXmx = state.anrRefusal == "xmx" && state.xmxSaved;
-    return state.xmxSaved != state.xmxLatched || (!anrBlockedByXmx && state.anrSaved != state.anrLatched);
+    return state.xmxSaved != state.xmxLatched || (!anrBlockedByXmx && state.anrSaved != state.anrLatched)
+        || XmxModelPending(state);
+}
+
+inline const char* XmxModelName(const State& state) noexcept
+{
+    return state.xmxModelInEffect == "fsr" ? "FSR MFG" : "XeMFG DLSS-G";
 }
 
 inline bool XellShown(const State& state) noexcept
@@ -205,6 +223,8 @@ State Read(const std::string& text, BoolReader boolean, IntegerReader integer, S
     string(text, "xmxRefusal", next.xmxRefusal);
     string(text, "xmxIdle", next.xmxIdle);
     string(text, "xmxFailure", next.xmxFailure);
+    integer(text, "xmxModelSaved", next.xmxModelSaved);
+    string(text, "xmxModel", next.xmxModelInEffect);
     boolean(text, "anrSaved", next.anrSaved);
     boolean(text, "anrLatched", next.anrLatched);
     boolean(text, "anrLoaded", next.anrLoaded);

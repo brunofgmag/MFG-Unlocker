@@ -7,6 +7,7 @@ namespace xefg_cuda
 {
 namespace
 {
+std::atomic<const DispatchProbe*> gProbe{};
 template<class T> Microsoft::WRL::ComPtr<T> NativeOf(T* object) noexcept
 {
     Microsoft::WRL::ComPtr<T> native;
@@ -27,9 +28,10 @@ D3D12_CPU_DESCRIPTOR_HANDLE NativeCpuStart(ID3D12DescriptorHeap* heap) noexcept
     return NativeOf(heap)->GetCPUDescriptorHandleForHeapStart();
 }
 }
+void SetDispatchProbe(const DispatchProbe* probe) noexcept { gProbe.store(probe, std::memory_order_release); }
 bool ProviderList::Bind(ID3D12GraphicsCommandList* real) noexcept
 {
-    Unbind(); state_ = {}; escaped_ = false;
+    Unbind(); state_ = {}; pipeline_ = nullptr; escaped_ = false;
     std::string reason;
     auto launch = NativeOf(real);
     if (disabled_ || !CanRecord(launch.Get(), reason))
@@ -58,7 +60,13 @@ void ProviderList::Unbind() noexcept
     list2_.Reset();
     launch_.Reset();
     if (real_) real_->Release();
-    real_ = nullptr; state_ = {};
+    real_ = nullptr; state_ = {}; pipeline_ = nullptr;
+}
+void ProviderList::Sample(ID3D12GraphicsCommandList* recordedOn, bool launched, UINT x, UINT y, UINT z) noexcept
+{
+    const DispatchProbe* probe = gProbe.load(std::memory_order_acquire);
+    if (!probe) return;
+    probe->record(recordedOn, DispatchSample{pipeline_, state_.layer, launched, x, y, z}, probe->context);
 }
 void ProviderList::Escape(const char* reason) noexcept
 {
@@ -135,7 +143,7 @@ HRESULT STDMETHODCALLTYPE ProviderList::Reset(ID3D12CommandAllocator *pAllocator
 void STDMETHODCALLTYPE ProviderList::ClearState(ID3D12PipelineState *pPipelineState)
 {
     if (!real_) return;
-    state_ = {}; state_.layer = LayerOf(pPipelineState);
+    state_ = {}; state_.layer = LayerOf(pPipelineState); pipeline_ = pPipelineState;
         real_->ClearState(pPipelineState);
 }
 
@@ -156,12 +164,20 @@ void STDMETHODCALLTYPE ProviderList::Dispatch(UINT ThreadGroupCountX, UINT Threa
     if (!real_) return;
     if (state_.layer && !escaped_)
     {
-        if (LaunchOn(launch_.Get(), state_, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) return;
-        DeclinedScope declined;
-        real_->Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+        if (LaunchOn(launch_.Get(), state_, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ))
+        {
+            Sample(launch_.Get(), true, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+            return;
+        }
+        {
+            DeclinedScope declined;
+            real_->Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+        }
+        Sample(real_, false, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
         return;
     }
     real_->Dispatch(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+    Sample(real_, false, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 }
 
 void STDMETHODCALLTYPE ProviderList::CopyBufferRegion(ID3D12Resource *pDstBuffer, UINT64 DstOffset, ID3D12Resource *pSrcBuffer, UINT64 SrcOffset, UINT64 NumBytes)
@@ -227,7 +243,7 @@ void STDMETHODCALLTYPE ProviderList::OMSetStencilRef(UINT StencilRef)
 void STDMETHODCALLTYPE ProviderList::SetPipelineState(ID3D12PipelineState *pPipelineState)
 {
     if (!real_) return;
-    state_.layer = LayerOf(pPipelineState);
+    state_.layer = LayerOf(pPipelineState); pipeline_ = pPipelineState;
         real_->SetPipelineState(pPipelineState);
 }
 

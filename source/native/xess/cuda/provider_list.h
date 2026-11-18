@@ -5,6 +5,10 @@
 
 namespace xefg_cuda
 {
+struct DispatchSample { ID3D12PipelineState* pipeline; uint8_t layer; bool launched; UINT x, y, z; };
+struct DispatchProbe { void (*record)(ID3D12GraphicsCommandList* recordedOn, const DispatchSample& sample, void* context) noexcept; void* context; };
+void SetDispatchProbe(const DispatchProbe* probe) noexcept;
+
 // One feature owns this proxy. Its interfaces are valid only during a bound Execute.
 // No command-list vtable pointer or slot is ever written.
 class ProviderList final : public ID3D12GraphicsCommandList2
@@ -84,11 +88,13 @@ public:
     void STDMETHODCALLTYPE WriteBufferImmediate(UINT Count, const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER *pParams, const D3D12_WRITEBUFFERIMMEDIATE_MODE *pModes) override;
 private:
     void Escape(const char*) noexcept;
+    void Sample(ID3D12GraphicsCommandList* recordedOn, bool launched, UINT x, UINT y, UINT z) noexcept;
     std::atomic<ULONG> refs_{1};
     ID3D12GraphicsCommandList* real_{};
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> launch_;
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> list2_;
     ListState state_{};
+    ID3D12PipelineState* pipeline_{};
     bool escaped_{}, disabled_{}, loggedBind_{};
     std::string lastRefusal_;
 };

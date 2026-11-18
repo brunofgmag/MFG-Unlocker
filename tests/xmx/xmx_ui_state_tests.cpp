@@ -156,6 +156,70 @@ void AnrModel()
     Check(read.anrSaved && read.anrLatched && read.anrLoaded && !read.anrEvaluating && read.anrLive == 2
             && read.anrRefusal == "xmx" && read.anrFailure == "gone", "the ANR fields are read from the status");
 }
+
+void FsrModel()
+{
+    xess_ui::State state;
+    state.xmxSaved = TRUE;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eXmx, "a saved XMX with the XeFG model shows XeMFG DLSS-G");
+    state.xmxModelSaved = 1;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eFsr, "a saved XMX with the FSR model shows FSR MFG");
+    state.xmxSaved = FALSE;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eNvidia, "the FSR model key alone does not pick FSR MFG");
+    state.anrSaved = TRUE;
+    Check(xess_ui::SavedModel(state) == xess_ui::Model::eAnr, "the FSR model key alone leaves ANR FG as it was");
+
+    state = {};
+    Check(!xess_ui::ModelRefused(state, xess_ui::Model::eFsr), "FSR MFG can be picked by default");
+    state.xemfgStandalone = TRUE;
+    Check(xess_ui::ModelRefused(state, xess_ui::Model::eFsr), "XeMFG standalone refuses picking FSR MFG");
+    state = {};
+    state.xmxRefusal = "translated_gpu";
+    Check(xess_ui::ModelRefused(state, xess_ui::Model::eFsr), "a translated GPU refuses picking FSR MFG");
+    state = {};
+    state.xmxSaved = TRUE;
+    state.xmxModelSaved = 1;
+    state.xmxRefusal = "translated_gpu";
+    state.anrRefusal = "translated_gpu";
+    Check(!xess_ui::ModelLocked(state), "a saved FSR MFG can go back to NVIDIA even when every model is refused");
+
+    state = {};
+    state.xmxSaved = TRUE;
+    state.xmxLatched = TRUE;
+    state.xmxModelSaved = 1;
+    state.xmxModelInEffect = "xefg";
+    Check(xess_ui::ModelRestartPending(state), "a saved FSR MFG over a running XeFG model waits for a restart");
+    state.xmxModelInEffect = "fsr";
+    Check(!xess_ui::ModelRestartPending(state), "a saved FSR MFG that is running waits for nothing");
+    state.xmxModelInEffect.clear();
+    Check(!xess_ui::ModelRestartPending(state), "an unnamed model in effect is not a pending restart");
+    state.xmxModelSaved = 0;
+    state.xmxModelInEffect = "fsr";
+    Check(xess_ui::ModelRestartPending(state), "a saved XeFG model over a running FSR model waits for a restart");
+    state.xmxModelInEffect = "xefg";
+    Check(!xess_ui::ModelRestartPending(state), "a saved XeFG model that is running waits for nothing");
+    state.xmxLatched = FALSE;
+    state.xmxSaved = FALSE;
+    state.xmxModelInEffect = "fsr";
+    Check(!xess_ui::ModelRestartPending(state), "a model name without a latched XMX is not a pending restart");
+
+    Check(xess_ui::ModelUsesXmx(xess_ui::Model::eXmx) && xess_ui::ModelUsesXmx(xess_ui::Model::eFsr),
+        "both XeMFG DLSS-G models write the xmx key");
+    Check(!xess_ui::ModelUsesXmx(xess_ui::Model::eNvidia) && !xess_ui::ModelUsesXmx(xess_ui::Model::eAnr),
+        "NVIDIA and ANR FG do not write the xmx key");
+
+    state = {};
+    Check(std::string(xess_ui::XmxModelName(state)) == "XeMFG DLSS-G", "the generator is named XeMFG DLSS-G by default");
+    state.xmxModelInEffect = "xefg";
+    Check(std::string(xess_ui::XmxModelName(state)) == "XeMFG DLSS-G", "the XeFG model is named XeMFG DLSS-G");
+    state.xmxModelInEffect = "fsr";
+    Check(std::string(xess_ui::XmxModelName(state)) == "FSR MFG", "the FSR model is named FSR MFG");
+
+    const auto absent = Parse("{\"xmxLatched\":true}");
+    Check(absent.xmxModelSaved == 0 && absent.xmxModelInEffect.empty(), "an older status reads no model keys");
+    const auto read = Parse("{\"xmxModelSaved\":1,\"xmxModel\":fsr}");
+    Check(read.xmxModelSaved == 1 && read.xmxModelInEffect == "fsr", "the model fields are read from the status");
+}
 }
 
 int main()
@@ -164,5 +228,6 @@ int main()
     Rows();
     ModelCombo();
     AnrModel();
+    FsrModel();
     return gChecks != 0 && gFailures == 0 ? 0 : 1;
 }

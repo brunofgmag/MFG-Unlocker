@@ -6,6 +6,7 @@ export PYTHONDONTWRITEBYTECODE=1
 cache=${MFG_CACHE:-$HOME/.cache/mfg-unlocker}
 streamline=${MFG_STREAMLINE_ROOT:-$cache/sdk/streamline-sdk-v2.14.1}
 xess=${MFG_XESS_SDK_ROOT:-$cache/sdk/xess-sdk-3.0.2}
+fidelityfx=${MFG_FIDELITYFX_SDK_ROOT:-$cache/sdk/fidelityfx-sdk-v1.1.4}
 imgui=${MFG_IMGUI_ROOT:-$HOME/Projetos/renodx/external/reshade/deps/imgui}
 vulkan12_git=${MFG_VULKAN12_HEADERS_GIT:-$HOME/Projetos/vkd3d-proton-fenix-cachyos-11.0-20261005-slr-20261020-093638/khronos/Vulkan-Headers}
 vulkan14_include=${MFG_VULKAN14_INCLUDE:-/usr/include}
@@ -45,6 +46,7 @@ resolve_sdk_roots() {
     while IFS== read -r key value; do
         root[$key]=$value
     done <<<"$resolved"
+    root[fidelityfx]=$fidelityfx
 }
 
 ensure_inputs() {

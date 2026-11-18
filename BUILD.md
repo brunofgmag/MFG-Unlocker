@@ -104,6 +104,14 @@ and outputs. The fixed export map is recorded in `proxy_exports.txt`; generation
 does not scan DLLs on the build machine. Third-party notices, including the
 XeSS program-data notice, remain embedded in the release DLL.
 
+The FSR 3.1 frame interpolation generator (`source/native/fsr/`) needs the AMD FidelityFX SDK v1.1.4 (tag `v1.1.4`, commit
+`c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`): point the CMake cache variable `MFG_FIDELITYFX_SDK_ROOT` at the checkout, the folder
+that holds `sdk/`. At configure time `fsr/generate_fsr_shaders.py` copies the parts of `sdk/` the build uses into
+`generated/fsr/sdk`, applies `fsr/fork.patch` there and compiles the frame interpolation and optical flow permutations with
+the SDK's own `sdk/tools/binary_store/FidelityFX_SC.exe` (72 compiles, a few seconds). The SDK checkout itself is never
+modified. A stamp of the patch, the script and the SDK's `ffx_frameinterpolation.cpp` lets an unchanged configure skip the
+step. `MFG_FSR_SHADER_RUNNER` names the program that runs the Windows compiler on a Linux host and stays empty on Windows.
+
 The Witcher 3 hair converter header is generated from
 `source/native/witcher_dots/converter.hlsl` and `converter_source.h.in`.
 Generated headers and runtime shader caches are not source inputs to publish.
@@ -168,7 +176,7 @@ The Windows build above is untouched: `source/native/CMakeLists.txt` only takes 
 `MFG_PREGENERATED_INPUTS` is set, and `build.ps1` never sets it.
 
 Tools on the machine: clang-cl, lld-link, llvm-rc, llvm-mt, llvm-ml, llvm-lib, CMake 3.24 or newer, Ninja, Python 3.10
-or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. CUDA Toolkit 13.4 (`/opt/cuda/bin/nvcc`, or `MFG_NVCC`) compiles the tensor-core kernels. Wine is
+or newer, `spirv-val`, a Linux `dxc` of build 5512-01b62ad4, and an xwin splat of the CRT and SDK in `~/.xwin`. CUDA Toolkit 13.5 (`/opt/cuda/bin/nvcc`, or `MFG_NVCC`) compiles the tensor-core kernels. Wine is
 needed only for `test.sh`. The script prints the versions it finds and does not fail on them.
 
 Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A mismatch stops the script and names the file:
@@ -177,10 +185,15 @@ Inputs, each pinned by SHA-256 (the same pins as `build.ps1`, read from it). A m
 | --- | --- | --- |
 | Streamline SDK 2.14.1 | `~/.cache/mfg-unlocker/sdk/streamline-sdk-v2.14.1` | `MFG_STREAMLINE_ROOT` |
 | XeSS SDK 3.0.2 | `~/.cache/mfg-unlocker/sdk/xess-sdk-3.0.2` | `MFG_XESS_SDK_ROOT` |
+| FidelityFX SDK v1.1.4 | `~/.cache/mfg-unlocker/sdk/fidelityfx-sdk-v1.1.4` | `MFG_FIDELITYFX_SDK_ROOT` |
 | Dear ImGui `3912b3d` | `~/Projetos/renodx/external/reshade/deps/imgui` | `MFG_IMGUI_ROOT` |
 | Vulkan 1.2.176 headers | a Vulkan-Headers git checkout with tag `v1.2.176` | `MFG_VULKAN12_HEADERS_GIT` |
 | Vulkan 1.4.363 headers and SPIR-V grammar | `/usr/include` (Arch packages `vulkan-headers` and `spirv-headers`) | `MFG_VULKAN14_INCLUDE` |
 | Release 1.7.1 zip | `~/.cache/mfg-unlocker/release/v1.7.1/MFGUnlocker-v1.7.1.zip` | `MFG_RELEASE_ZIP` |
+
+The FidelityFX SDK is not pinned by SHA-256 here: the generator's stamp covers the patch, the script and the SDK's
+`ffx_frameinterpolation.cpp`, and `git apply` fails if the SDK is not the version the patch was cut from. The SDK's shader
+compiler runs under `tools/linux/wine.sh`.
 
 The pins describe the Windows checkouts, which use CRLF. ImGui and the Vulkan headers match only after LF to CRLF, so the
 script verifies them in that form and builds from a pinned CRLF copy in `~/.cache/mfg-unlocker/sdk/crlf`. The Vulkan
@@ -203,7 +216,7 @@ The tensor-core kernels (`xess/cuda/xefg_cuda_layers.cu`, `xefg_cuda_params.h`) 
 with `xess/cuda/generate_cuda_layers.py --linux`, using the same `-gencode` set as the Windows build (sm_75, sm_86, sm_89,
 sm_120). The script writes the fatbin, `embedded_xefg_cuda.generated.h` and `embedded_xefg_cuda.rc.in` to
 `build/linux/xefg-cuda`, and CMake takes them from there (`MFG_XEFG_CUDA_INPUTS`) instead of from the extracted inputs.
-The generator pins the compiler (CUDA 13.4.92) and the fatbin's SHA-256 (`PINNED_FATBIN_LINUX`), next to the Windows pins
+The generator pins the compiler (CUDA 13.5.37) and the fatbin's SHA-256 (`PINNED_FATBIN_LINUX`), next to the Windows pins
 (13.2.51 and `PINNED_FATBIN`). A kernel edit changes the fatbin, so the script stops and prints the new digest; update
 the pin only after `tests/xess_cuda` passes with that fatbin. The release fatbin stays in the extracted inputs, for
 comparison, and CMake refuses to embed it: the kernels' parameter block no longer matches the release's. The Windows pin
@@ -236,7 +249,20 @@ sample under Proton for 90 seconds with `VKD3D_SHADER_DUMP_PATH` set, and keeps 
 the route recognizes in `~/.cache/mfg-unlocker/intel-programs`. The cases write their output to
 `build/proton-cuda/route/tests/<case>/output.txt`. The route also runs `XmxTensorCoreContextsTests` from `tests/xmx`,
 which `test.sh` builds before it: 16 XeMFG DLSS-G contexts at different sizes, and the sixteenth must still launch on the
-tensor cores. Each XeFG context brings 28 layer pipelines, and the route holds up to 512.
+tensor cores. Each XeFG context brings 28 layer pipelines, and the route holds up to 512. It also runs the seven `FsrModel_*`
+tests of the FSR 3.1 model from `tests/fsr`, one process per test, because they need Proton's D3D12 device.
+
+`tools/linux/proton_cuda.sh profile` measures where the GPU time of one XeFG `execute` goes. It runs `XmxXefgProfile` from
+`tests/xmx` under Proton, drives XeFG at MSFS 2024's shapes (3840x2160 output, 2560x1440 render, 3 generated frames, HUD
+composite on, 300 pairs after 30 of warmup) and prints a GPU timestamp for every dispatch, per generated frame. Arguments
+go straight to the benchmark: `--output WxH`, `--render WxH`, `--frames N`, `--pairs N`, `--warmup N` and `--no-hud`.
+`--dxil` keeps the tensor-core route off, so the same run measures the DXIL port, with totals only. `--declined` installs
+the route but declines every layer, which gives the DXIL port dispatch by dispatch. `--content zero|scene|noise` chooses
+what the input textures hold: zeros (the default), a flight-like frame pair with moving objects, or random texels.
+The run also names the program behind every non-layer pass: it hooks pipeline creation, dumps each compute program under
+`build/proton-cuda/profile/programs/` and prints `pass <k> -> <file>` for the ones in the known program folders.
+`profile --reshade` runs the same benchmark with ReShade's `dxgi.dll` and the route tests' add-ons beside it, so the device
+is wrapped as in the game. It needs the same condition as the GPU tests: no game or simulator using the GPU.
 
 Under Proton, vkd3d-proton gives no CUDA object for a buffer view. Under Wine, the route therefore records the GPU
 address of each buffer view XeFG writes, and passes weights, scale and bias to the kernels as addresses. Textures and
