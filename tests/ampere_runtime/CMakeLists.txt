@@ -35,6 +35,7 @@ add_executable(DriverPathTests driver_path_tests.cpp)
 add_executable(LoaderLockTests loader_lock_tests.cpp)
 # cowtwin.1 (issues 170 and 172): a writable protection read back as its copy-on-write twin (Wine/Proton).
 add_executable(ProtectionTwinTests protection_twin_tests.cpp)
+target_link_options(ProtectionTwinTests PRIVATE /SECTION:.mfgrx,ER)
 # GitHub issue 158: the per-handle real-frame table reuses its least recently used slot.
 add_executable(FirstSampleTableTests first_sample_table_tests.cpp)
 # GitHub issue 149 follow-up (Indiana Jones, RTX 4090): the RTX 40 2X hold follows the provider a Create uses, and an
