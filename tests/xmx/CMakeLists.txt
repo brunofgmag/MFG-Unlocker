@@ -30,7 +30,7 @@ if(EXISTS "${XESS_SDK_ROOT}/inc/xess_fg/xefg_swapchain_d3d12.h" AND EXISTS "${ST
         AND EXISTS "${MFG_GENERATED_DIR}/embedded_xess_programs.generated.h")
     add_executable(XmxRuntimeTests xmx_runtime_tests.cpp "${NATIVE}/xmx/xmx_context.cpp" "${NATIVE}/xess/xess_mod.cpp"
         "${NATIVE}/xess/host_unlock.cpp" "${NATIVE}/xess/runtime_payload.cpp" "${NATIVE}/xess/xess_runtime.cpp"
-        "${NATIVE}/embedded_payload.cpp" "${NATIVE}/third_party/lzma/LzmaDec.c")
+        "${NATIVE}/embedded_payload.cpp")
     target_include_directories(XmxRuntimeTests PRIVATE "${MFG_GENERATED_DIR}" "${STREAMLINE_ROOT}/include"
         "${STREAMLINE_ROOT}/external/ngx-sdk/include" "${XESS_SDK_ROOT}/inc/xess_fg" "${XESS_SDK_ROOT}/inc/xell")
     target_compile_definitions(XmxRuntimeTests PRIVATE MFG_UNLOCK_XESS=1)
@@ -40,7 +40,7 @@ if(EXISTS "${XESS_SDK_ROOT}/inc/xess_fg/xefg_swapchain_d3d12.h" AND EXISTS "${ST
     add_executable(XmxTensorCoreContextsTests xmx_tensor_core_contexts_tests.cpp "${NATIVE}/xmx/xmx_context.cpp"
         "${NATIVE}/xmx/xmx_tensor_cores.cpp" "${NATIVE}/xess/xess_mod.cpp" "${NATIVE}/xess/host_unlock.cpp"
         "${NATIVE}/xess/runtime_payload.cpp" "${NATIVE}/xess/xess_runtime.cpp" "${NATIVE}/embedded_payload.cpp"
-        "${NATIVE}/third_party/lzma/LzmaDec.c" "${NATIVE}/xess/cuda/cuda_route.cpp"
+        "${NATIVE}/xess/cuda/cuda_route.cpp"
         "${NATIVE}/xess/cuda/buffer_views.cpp" "${NATIVE}/xess/cuda/provider_list.cpp")
     target_include_directories(XmxTensorCoreContextsTests PRIVATE "${MFG_GENERATED_DIR}" "${STREAMLINE_ROOT}/include"
         "${STREAMLINE_ROOT}/external/ngx-sdk/include" "${XESS_SDK_ROOT}/inc/xess_fg" "${XESS_SDK_ROOT}/inc/xell")
@@ -51,7 +51,7 @@ if(EXISTS "${XESS_SDK_ROOT}/inc/xess_fg/xefg_swapchain_d3d12.h" AND EXISTS "${ST
     add_executable(XmxXefgProfile xmx_xefg_profile.cpp "${NATIVE}/xmx/xmx_context.cpp"
         "${NATIVE}/xmx/xmx_tensor_cores.cpp" "${NATIVE}/xmx/xmx_hud_composite.cpp" "${NATIVE}/xess/xess_mod.cpp"
         "${NATIVE}/xess/host_unlock.cpp" "${NATIVE}/xess/runtime_payload.cpp" "${NATIVE}/xess/xess_runtime.cpp"
-        "${NATIVE}/embedded_payload.cpp" "${NATIVE}/third_party/lzma/LzmaDec.c" "${NATIVE}/xess/cuda/cuda_route.cpp"
+        "${NATIVE}/embedded_payload.cpp" "${NATIVE}/xess/cuda/cuda_route.cpp"
         "${NATIVE}/xess/cuda/buffer_views.cpp" "${NATIVE}/xess/cuda/provider_list.cpp")
     target_include_directories(XmxXefgProfile PRIVATE "${MFG_GENERATED_DIR}" "${STREAMLINE_ROOT}/include"
         "${STREAMLINE_ROOT}/external/ngx-sdk/include" "${XESS_SDK_ROOT}/inc/xess_fg" "${XESS_SDK_ROOT}/inc/xell")

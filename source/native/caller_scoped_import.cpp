@@ -1,4 +1,5 @@
 #include "caller_scoped_import.h"
+#include "overlay_slots.h"
 #include "process_mitigations.h"
 #include "single_module.h"
 #include "protected_pointer.h"
@@ -22,7 +23,7 @@ struct Entry {
     bool installed = false;
     std::array<unsigned char,5> published{};
 };
-std::array<Entry, 12> entries; // Resolver, five input APIs, three DXGI and three interposer factories.
+std::array<Entry, 15> entries; // Resolver, five input APIs, and three factories each for DXGI, ReShade and Streamline.
 std::mutex mutex;
 // Second caller range read by a relay at each call. Empty (begin above end)
 // until published; every partially published state is empty or exact.

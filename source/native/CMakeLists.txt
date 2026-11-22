@@ -161,10 +161,11 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
     endif()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS generate_dlss5_vk_shaders.py dlss5.cpp)
     include_directories("${MFG_GENERATED}")
-    # slim.1 (V1.7.1): every generated payload list ships as one LZMA-compressed resource (embedded_payload.cmake);
-    # the ids are unique in the module: 3900 ampere_kernels (ampere_native_cache.cmake), 3901-3905 below.
+    # Every generated payload list is a payload group (embedded_payload.cmake): each payload its own uncompressed
+    # resource at its own id (V1.7.2 nolzma.1; slim.1 had packed them as LZMA). Slots: 0 ampere_kernels
+    # (ampere_native_cache.cmake), 1-5 below.
     include(embedded_payload.cmake)
-    mfg_pack_payloads("${MFG_GENERATED}/dlss5_vk_spirv.rc" dlss5_vk 5 3905 "${MFG_GENERATED}" MFG_DLSS5_VK_RESOURCE)
+    mfg_pack_payloads("${MFG_GENERATED}/dlss5_vk_spirv.rc" dlss5_vk 5 "${MFG_GENERATED}" MFG_DLSS5_VK_RESOURCE)
     set(MFG_XESS_SOURCES)
     set(MFG_XESS_RESOURCES)
     if(MFG_UNLOCK_XESS)
@@ -271,12 +272,9 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
             xmx/xmx.cpp xmx/xmx_generator.cpp xmx/xmx_hud_composite.cpp xmx/xmx_context.cpp xmx/xmx_tensor_cores.cpp xmx/xmx_latency.cpp xmx/low_latency_hold.cpp
             fsr/fsr_model.cpp ${MFG_FSR_SDK_SOURCES}
             anr/anr.cpp)
-        mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_programs.rc" xess_programs 1 3901 "${MFG_GENERATED}" packed_programs)
-        mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_shaders.rc" xess_shaders 2 3902 "${MFG_GENERATED}" packed_shaders)
-        mfg_pack_payloads("${MFG_GENERATED}/embedded_xefg_cuda.rc" xefg_cuda 3 3903 "${MFG_GENERATED}" packed_cuda)
-        if(MFG_PREGENERATED_INPUTS)
-            set_source_files_properties("${packed_cuda}" PROPERTIES OBJECT_DEPENDS "${MFG_GENERATED}/xefg_cuda.lzma")
-        endif()
+        mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_programs.rc" xess_programs 1 "${MFG_GENERATED}" packed_programs)
+        mfg_pack_payloads("${MFG_GENERATED}/embedded_xess_shaders.rc" xess_shaders 2 "${MFG_GENERATED}" packed_shaders)
+        mfg_pack_payloads("${MFG_GENERATED}/embedded_xefg_cuda.rc" xefg_cuda 3 "${MFG_GENERATED}" packed_cuda)
         set(MFG_XESS_RESOURCES "${packed_programs}" "${packed_shaders}" "${packed_cuda}")
         # vkxefg.1 (V1.6.2): XeMFG on Vulkan games. The xvk D3D12-on-Vulkan layer, its embedded SPIR-V program
         # set and the Vulkan host build as their own objects against the Vulkan 1.4 headers they need; the rest of
@@ -324,11 +322,11 @@ if(MFG_UNLOCK_BUILD_SINGLE_MODULE)
             xess/vulkan/vk_host.cpp xess/vulkan/vk_xefg_api.cpp xess/vulkan/vk_provider.cpp xess/vulkan/xefg_internal.cpp
             # ngxprov.1: the provider API (both APIs) and the D3D12 provider, built with the Vulkan provider they share
             # XeFG's internal API and runtime with.
-            xess/ngx_provider.cpp xess/d3d12_provider.cpp
+            xess/ngx_provider.cpp xess/d3d12_provider.cpp xess/streamline_provider.cpp
             # pluginprov.1: the shim's entry points inside the module, for OptiScaler's RegisterProvider.
             xess/vulkan/xemfg_provider_inprocess.cpp
             rtx_hair/vk_hair.cpp rtx_hair/vk_dots_builder.cpp rtx_hair/lss_spirv.cpp rtx_hair/spirv_module.cpp)
-        mfg_pack_payloads("${MFG_GENERATED}/embedded_xvk_programs.rc" xvk_programs 4 3904 "${MFG_GENERATED}" packed_xvk)
+        mfg_pack_payloads("${MFG_GENERATED}/embedded_xvk_programs.rc" xvk_programs 4 "${MFG_GENERATED}" packed_xvk)
         list(APPEND MFG_XESS_RESOURCES "${packed_xvk}")
     endif()
 
