@@ -292,7 +292,7 @@ float ExposureBase(){
  if(mode!=0&&(flags&4)){
   float e=ex.Load(int3(0,0,0)).r;
   if(preExposure>0)e/=preExposure;
-  if(!(e>0)||abs(e)>=3e38)e=1;
+  e=(e>0&&abs(e)<3e38)?e:1;
   game=mode==2?1/e:e;
  }
  float f=exposure*game;return f>0&&abs(f)<3e38?f:0;
@@ -904,7 +904,9 @@ DXGI_FORMAT DepthViewFormat(DXGI_FORMAT format) noexcept {
 // viewed: we create a shader view of it (stage color, exposure), so its format
 // needs a typed view. The provider alone reads depth and motion vectors, whose
 // formats (e.g. a depth-stencil typeless depth buffer) it handles itself.
-// anyMips: the stage color may carry a mip chain; our views and barriers only touch mip 0.
+// anyMips: the texture may carry a mip chain. The stage color: our views and barriers only touch mip 0. Depth and
+// motion vectors (issue 171, MSFS 2024: R32_FLOAT depth with 11 mips): we put no barrier on them, our Present-stage
+// copy reads mip 0 through its own view, and the provider takes the resource as the game's DLSS does.
 bool TextureOnDevice(ID3D12Resource* resource,ID3D12Device* device,const Rect& rect,D3D12_RESOURCE_DESC& desc,bool viewed,bool anyMips=false) noexcept {
     __try {
         ID3D12Device* owner=nullptr;

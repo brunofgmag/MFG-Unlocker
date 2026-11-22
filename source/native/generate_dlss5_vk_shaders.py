@@ -9,7 +9,8 @@ binding 6 in its own format, into the stage's copy at binding 4 before Encode re
 
 The compiler is the Vulkan SDK 1.4.363.0 dxc (SPIR-V code generation; the Windows SDK dxc has none), pinned by its
 version line, and every output is pinned by SHA-256, so a different compiler or an edited source fails the build.
-dlss5_vk_spirv.rc lists the passes for pack_embedded_payloads.py (the dlss5_vk group, V1.7.1 slim.1), and
+dlss5_vk_spirv.rc lists the passes for pack_embedded_payloads.py (the dlss5_vk payload group; each pass its own
+uncompressed resource since V1.7.2 nolzma.1), and
 dlss5_vk_spirv.h names each pass's resource id.
 """
 from pathlib import Path
@@ -36,11 +37,11 @@ struct CData { uint2 origin; uint2 size; };
 
 # name -> (entry, source, storage format of binding 4, game format of binding 6, pinned SPIR-V SHA-256)
 VARIANTS = {
-    "encode": ("Encode", "stage", "rgba16f", None, "DE2E0CC967EB0890C9EC0D9C4E6B76F49A41A0D276122A95B20DAFFD37F33982"),
-    "meter": ("Meter", "stage", "rgba16f", None, "DDC74ABDF63A7356BD66EEBE0ECF225A3C9DD7FB891B031B55CE176E2AB93BB3"),
-    "decode_rgba16f": ("Decode", "stage", "rgba16f", None, "8ED47C865DD80AB971D87D8D3B810E933DC44BA98C9A3CE75EEC65A2656E4BDF"),
-    "decode_rgba32f": ("Decode", "stage", "rgba32f", None, "2F46695B90A02F2DD30926DCD046D11AB7FC4B611ED27D671CB2437E2D953D76"),
-    "decode_rgba8": ("Decode", "stage", "rgba8", None, "500D4427ABBD9D5D81487A8EB4274A5688586F08321AC735EEF283EAED4441F8"),
+    "encode": ("Encode", "stage", "rgba16f", None, "95DEF5C58F01340D6C01FB817821F6DE37F8D559E0EE3166DB00F89A19D8FD24"),
+    "meter": ("Meter", "stage", "rgba16f", None, "75DA0250347C865C4E90253207B015779CC4061218D6A9AA5F37AE69969F213B"),
+    "decode_rgba16f": ("Decode", "stage", "rgba16f", None, "F55ED74C1801B2468169025D21AED2EED359A04487555F669086966AEA41A3A3"),
+    "decode_rgba32f": ("Decode", "stage", "rgba32f", None, "6CCA3FDAD2DA0A12D338C9D91D4BFF6F5456F25CAECF9CAF567DC595F6755C2D"),
+    "decode_rgba8": ("Decode", "stage", "rgba8", None, "BB853BC7A4022E00D23A41104E10C6993AB60F44A7B94E57BF4A8CFAE79B3A92"),
     "copy_in_rgba16f": ("CopyIn", "copy", "rgba16f", "rgba16f", "7C0DB81DA79311B461364433C631FEC0F3D9D08AFCA248ADAEFCA995CBCB17B0"),
     "copy_in_rgba32f": ("CopyIn", "copy", "rgba32f", "rgba32f", "8780DDAD2B45B844F130BF6068DA7212A1902CE209D4811A2FB76B55D385463A"),
     "copy_in_rgba8": ("CopyIn", "copy", "rgba16f", "rgba8", "EEC51BB968929D378C29CA8085ED021AF179FC628B2DCC286C6F974C2EF5B6E8"),
@@ -62,6 +63,15 @@ text = (args.source / "dlss5.cpp").read_text(encoding="utf-8")
 opening = 'const char kShader[]=R"('
 start = text.index(opening) + len(opening)
 stage = text[start:text.index(')";', start)]
+# Issue 169: Wine's D3DCompile (vkd3d-shader) has no isfinite, isnan or isinf, and the D3D12 stage compiles these
+# texts at run time. They test ranges with plain comparisons instead (a NaN fails every comparison).
+boost_opening = 'const char kBoostShader[]=R"('
+boost_start = text.index(boost_opening) + len(boost_opening)
+for label, body in (("kShader", stage), ("kBoostShader", text[boost_start:text.index(')";', boost_start)])):
+    for intrinsic in ("isfinite(", "isnan(", "isinf("):
+        if intrinsic in body:
+            raise SystemExit(f"dlss5.cpp {label}: {intrinsic}...) does not compile under Wine's D3DCompile; "
+                             "use comparisons")
 block = re.search(r"cbuffer C:register\(b0\) \{(.*?)\};", stage, re.S)
 if not block:
     raise SystemExit("dlss5.cpp kShader: no cbuffer C:register(b0)")

@@ -13,6 +13,7 @@
 #include "gpu_dispatch.h"
 #include "midpoint_fix.h"
 #include "xess/d3d12_host.h"
+#include "xess/streamline_provider.h"
 #include "xess/vulkan/vk_host.h"
 #include "anr/anr.h"
 #include "xmx/xmx.h"
@@ -225,4 +226,15 @@ void CaptureDlssEvaluate(ID3D12GraphicsCommandList*, const NVSDK_NGX_Parameter*)
 namespace xess_vulkan
 {
 bool CaptureDlssEvaluate(void*, const NVSDK_NGX_Parameter*) noexcept { return false; }
+}
+
+namespace xess_streamline_provider
+{
+bool Wanted() noexcept { return false; }
+uint32_t Live() noexcept { return 0; }
+bool Holds(const NVSDK_NGX_Handle*) noexcept { return false; }
+bool TryCreate(ID3D12GraphicsCommandList*, const NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**, int32_t&) noexcept { return false; }
+bool TryEvaluate(ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*, const NVSDK_NGX_Parameter*, int32_t&) noexcept { return false; }
+bool TryRelease(NVSDK_NGX_Handle*, int32_t&) noexcept { return false; }
+void Decline(const char*) noexcept {}
 }

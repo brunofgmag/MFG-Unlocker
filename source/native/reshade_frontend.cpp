@@ -3325,11 +3325,11 @@ void DrawPresentationDebug(const MfgUnlockReShadeSnapshot& snapshot)
         snapshot.reflexHookMask);
 }
 
-// rtxhair.1: universal hair, on in every game (Witcher 3 included) unless RTXMFG.RtxHair.ini turns it off. The game's
-// own RTX hair path runs; this panel shows whether its hair builds are being converted.
+// The universal converter runs from device creation. Its panel appears once the game requests LSS.
 void DrawUniversalHair()
 {
     const auto status = rtx_hair::universal::ReadSnapshot();
+    if (!status.lssRequested) return;
     using rtx_hair::universal::State;
     Section(T("Path traced hair"));
     const bool prepared = status.state == State::Prepared;
@@ -3346,7 +3346,7 @@ void DrawUniversalHair()
         case State::Failed: text = T("Unavailable"); tone = Tone::Bad; break;
         case State::Prepared:
             if (status.lastBuildAgeMs < 2000) { text = T("Active"); detail = T("universal: game RTX hair converted"); tone = Tone::Good; }
-            else if (status.builds) { text = T("Idle"); detail = T("no hair built in the last 2 s"); tone = Tone::Normal; }
+            else if (status.lastBuildAgeMs != UINT64_MAX) { text = T("Idle"); detail = T("no hair built in the last 2 s"); tone = Tone::Normal; }
             else { text = T("Ready"); detail = T("waiting for game hair"); tone = Tone::Normal; }
             break;
         }
@@ -3370,7 +3370,7 @@ void DrawUniversalHair()
 void DrawUniversalHairDiagnostics()
 {
     const auto status = rtx_hair::universal::ReadSnapshot();
-    if (status.state != rtx_hair::universal::State::Prepared) return;
+    if (!status.lssRequested || status.state != rtx_hair::universal::State::Prepared) return;
     if (!ImGui::CollapsingHeader(l10n::Label("Hair diagnostics"))) return;
     constexpr double mib = 1024.0 * 1024.0;
     if (BeginGrid("##universalhaircounters"))
@@ -3959,6 +3959,9 @@ void XemfgRestartNotes()
     const std::string& why = x.xemfgReason;
     if (x.xemfgApi != "d3d12" || why.empty())
         Note(Tone::Pending, T("Restart the game to start XeMFG."));
+    else if (why == "generator_swap")   // genswap.1: the game's DLSS-G feature could not be re-created live
+        Note(Tone::Pending, T("XeMFG starts once DLSS frame generation is turned off and on again in the game's settings, "
+            "or after a restart."));
     else if (why == "resize_ignored_remembered")   // xemfglive.3: [XeMFG] ProxyBackBuffers=1 was written beside the game
         Note(Tone::Pending, T("This game ignores window size changes, so XeMFG starts after a restart. From then on, "
             "XeMFG switches on and off in this game without a restart."));
@@ -4035,7 +4038,10 @@ void XemfgNotes()
     if (!x.xemfgStandalone)
     {
         // xemfglive.1: switched off while XeFG still has the game's chain (the game has not resized since).
-        if (x.xemfgState == "returning")
+        if (x.xemfgState == "returning" && x.xemfgReason == "generator_swap")   // genswap.1
+            Note(Tone::Pending, T("XeMFG is off, but it keeps generating until DLSS frame generation is turned off and on "
+                "again in the game's settings, or a restart."));
+        else if (x.xemfgState == "returning")
             Note(Tone::Pending, T("XeMFG is off, but XeFG keeps the game's swap chain until the game's next resolution or "
                 "window-mode change, or a restart."));
         // xemfglive.5: XeMFG took the swap chain of the game's DLSS Frame Generation in this session.
@@ -4046,7 +4052,9 @@ void XemfgNotes()
     }
     const std::string& state = x.xemfgState;
     const std::string& why = x.xemfgReason;
-    if (state == "switching")
+    if (state == "switching" && why == "generator_swap")   // genswap.1: behind the game's Streamline no chain moves
+        Note(Tone::Pending, T("Switching the game's frame generation to XeMFG..."));
+    else if (state == "switching")
         Note(Tone::Pending, T("Moving the game's swap chain to XeMFG..."));
     else if (state == "restart")
         XemfgRestartNotes();
@@ -4058,6 +4066,9 @@ void XemfgNotes()
         Note(Tone::Bad, T("XeMFG could not start: %s"), why.c_str());
     else if (why == "game_frame_generation_off")
         Note(Tone::Pending, T("Turn on DLSS frame generation in the game's settings. XeMFG replaces it."));
+    else if (x.xemfgSource == "dlssg" && x.xemfgDynamic)   // genswap.1: Streamline presents and paces there
+        Note(Tone::Dim, T("Dynamic MFG does not apply while XeMFG runs as the game's DLSS frame generation. The frame "
+            "count above is used."));
     else if (why == "game_fsr_frame_generation")
         Note(Tone::Pending, T("Turn off the game's FSR frame generation. XeMFG does not run on top of it."));
     else if (why == "motion_vector_size")
@@ -4089,12 +4100,13 @@ void XemfgStatusRows()
         StatusRow("XeMFG", Tone::Pending, "%s", T("Starting"));
     else if (state == "restart")
         StatusRow("XeMFG", Tone::Pending, "%s", x.xemfgApi == "d3d12" && XemfgResizeReason(x.xemfgReason)
-            ? T("Waiting for a resize") : T("Restart needed"));
+            ? T("Waiting for a resize") : x.xemfgReason == "generator_swap" ? T("Waiting") : T("Restart needed"));
     else if (state == "unavailable")
         StatusDetail("XeMFG", Tone::Bad, T("Unavailable"), x.xemfgReason.c_str());
     else
         StatusDetail("XeMFG", Tone::Pending, T("Waiting"), x.xemfgReason.c_str());
-    const char* source = x.xemfgSource == "streamline" ? "Streamline DLSS-G" : x.xemfgSource == "dlss" ? "DLSS"
+    const char* source = x.xemfgSource == "streamline" || x.xemfgSource == "dlssg" ? "Streamline DLSS-G"
+        : x.xemfgSource == "dlss" ? "DLSS"
         : x.xemfgSource == "xess" ? "XeSS" : x.xemfgSource == "fsr" ? "FSR" : nullptr;
     if (source) StatusRow(T("Inputs"), Tone::Normal, "%s", source);
     // The FPS row and its pin, as in the DLSS panel (DLSS-G's own counters stay at Off while XeMFG replaces
